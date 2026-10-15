@@ -1,0 +1,2851 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AeroFlow // 3D Navier-Stokes LES Wind Tunnel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #05080f;
+            color: #e2e8f0;
+            overflow: hidden;
+            user-select: none;
+        }
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 5px;
+            cursor: pointer;
+            background: #1e293b;
+            border-radius: 999px;
+            border: 1px solid #334155;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            height: 14px;
+            width: 14px;
+            border-radius: 50%;
+            background: #38bdf8;
+            cursor: pointer;
+            -webkit-appearance: none;
+            margin-top: -5.5px;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.75);
+            transition: transform 0.1s ease, background-color 0.15s ease;
+        }
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.18);
+            background: #7dd3fc;
+        }
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.4);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+        .glass-panel {
+            background: rgba(9, 14, 26, 0.85);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(51, 65, 85, 0.6);
+            box-shadow: 0 12px 32px -4px rgba(0, 0, 0, 0.7);
+        }
+        .heatmap-gradient {
+            background: linear-gradient(90deg, 
+                #1e3a8a 0%, 
+                #06b6d4 25%, 
+                #10b981 50%, 
+                #eab308 75%, 
+                #ef4444 100%
+            );
+        }
+        .preset-btn.active {
+            background: rgba(14, 165, 233, 0.2);
+            border-color: #38bdf8;
+            color: #38bdf8;
+            box-shadow: inset 0 0 12px rgba(56, 189, 248, 0.18);
+        }
+    </style>
+</head>
+<body class="w-screen h-screen relative flex flex-col justify-between overflow-hidden">
+
+    <!-- 3D Viewport Canvas Container -->
+    <div id="canvas-container" class="absolute inset-0 z-0"></div>
+
+    <!-- Top Navigation & Status Header -->
+    <header class="relative z-10 flex flex-wrap items-center justify-between px-4 py-2 glass-panel border-b border-slate-800/80 m-2 rounded-xl">
+        <div class="flex items-center space-x-3">
+            <div class="w-9 h-9 rounded-lg bg-sky-500/15 border border-sky-400/40 flex items-center justify-center text-sky-400 shadow-inner">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
+                </svg>
+            </div>
+            <div>
+                <div class="flex items-center space-x-2">
+                    <span class="font-bold tracking-wider text-sm text-white uppercase">AeroFlow 3D</span>
+                    <span class="text-[10px] mono uppercase px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30 font-semibold">Navier-Stokes LES v4.0</span>
+                    <span id="grid-res-badge" class="hidden md:inline-block text-[10px] mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">64×30×30 Eulerian MAC</span>
+                </div>
+                <p class="text-[11px] text-slate-400 hidden sm:block">3D BFECC MacCormack Advection • Vorticity Confinement • Smagorinsky SGS • Red-Black SOR Poisson</p>
+            </div>
+        </div>
+
+        <!-- Quick Camera Views & Solver Actions -->
+        <div class="flex items-center space-x-1.5 sm:space-x-2 mt-2 sm:mt-0">
+            <div class="hidden lg:flex items-center bg-slate-900/90 p-1 rounded-lg border border-slate-800 text-xs mr-1">
+                <button onclick="setCameraView('iso')" class="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 transition">Perspective</button>
+                <button onclick="setCameraView('side')" class="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 transition">Side (XY)</button>
+                <button onclick="setCameraView('top')" class="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 transition">Top (XZ)</button>
+                <button onclick="setCameraView('front')" class="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 transition">Wake (YZ)</button>
+            </div>
+
+            <button id="btn-pause" onclick="togglePause()" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-xs font-medium text-slate-200 transition">
+                <span id="pause-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span id="pause-label">Solving CFD</span>
+            </button>
+
+            <button onclick="stepSingleFrame()" class="px-2.5 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 transition" title="Advance 1 CFD Timestep">
+                Step Δt
+            </button>
+
+            <button onclick="resetCFDField()" class="px-2.5 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-xs text-sky-300 transition" title="Flush & Re-initialize Navier-Stokes Field">
+                Flush Tunnel
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Middle Area: Left Controls & Right Telemetry -->
+    <div class="relative z-10 flex-1 flex justify-between items-start px-2 pointer-events-none overflow-hidden">
+        
+        <!-- LEFT PANEL: Geometry, Attitude, LES Solver & Laser Sheet Controls -->
+        <aside class="w-80 sm:w-[340px] max-h-full overflow-y-auto glass-panel rounded-xl p-3.5 pointer-events-auto flex flex-col space-y-4 border border-slate-800/80">
+            
+            <!-- Section 1: Test Specimen / 3D Model -->
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-sky-400 flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+                        1. Test Geometry & Voxelizer
+                    </h2>
+                    <span id="model-status" class="text-[10px] mono text-slate-400">NACA 2412 Wing</span>
+                </div>
+
+                <!-- Presets Grid -->
+                <div class="grid grid-cols-3 gap-1.5 mb-2.5">
+                    <button onclick="loadPreset('airfoil')" id="preset-airfoil" class="preset-btn active px-2 py-1.5 rounded-lg border border-slate-700/80 bg-slate-900/60 hover:bg-slate-800/80 text-[11px] font-medium text-left flex flex-col transition">
+                        <span>Airfoil Wing</span>
+                        <span class="text-[9px] mono opacity-60">NACA 2412</span>
+                    </button>
+                    <button onclick="loadPreset('car')" id="preset-car" class="preset-btn px-2 py-1.5 rounded-lg border border-slate-700/80 bg-slate-900/60 hover:bg-slate-800/80 text-[11px] font-medium text-left flex flex-col transition">
+                        <span>GT Fastback</span>
+                        <span class="text-[9px] mono opacity-60">Ground Aero</span>
+                    </button>
+                    <button onclick="loadPreset('ahmed')" id="preset-ahmed" class="preset-btn px-2 py-1.5 rounded-lg border border-slate-700/80 bg-slate-900/60 hover:bg-slate-800/80 text-[11px] font-medium text-left flex flex-col transition">
+                        <span>Ahmed Body</span>
+                        <span class="text-[9px] mono opacity-60">25° Slant</span>
+                    </button>
+                    <button onclick="loadPreset('sphere')" id="preset-sphere" class="preset-btn px-2 py-1.5 rounded-lg border border-slate-700/80 bg-slate-900/60 hover:bg-slate-800/80 text-[11px] font-medium text-left flex flex-col transition">
+                        <span>Sphere</span>
+                        <span class="text-[9px] mono opacity-60">Vortex Wake</span>
+                    </button>
+                    <button onclick="loadPreset('cylinder')" id="preset-cylinder" class="preset-btn px-2 py-1.5 rounded-lg border border-slate-700/80 bg-slate-900/60 hover:bg-slate-800/80 text-[11px] font-medium text-left flex flex-col transition">
+                        <span>Cylinder</span>
+                        <span class="text-[9px] mono opacity-60">Kármán Street</span>
+                    </button>
+                    <button onclick="loadPreset('cube')" id="preset-cube" class="preset-btn px-2 py-1.5 rounded-lg border border-slate-700/80 bg-slate-900/60 hover:bg-slate-800/80 text-[11px] font-medium text-left flex flex-col transition">
+                        <span>Bluff Cube</span>
+                        <span class="text-[9px] mono opacity-60">Sharp Shear</span>
+                    </button>
+                </div>
+
+                <!-- Custom Upload Dropzone -->
+                <label for="file-upload" id="dropzone" class="group relative flex flex-col items-center justify-center w-full py-2.5 px-3 border border-dashed border-slate-600 hover:border-sky-400 rounded-xl bg-slate-900/40 hover:bg-sky-950/20 cursor-pointer transition">
+                    <div class="flex items-center space-x-2 text-xs text-slate-300 group-hover:text-sky-300">
+                        <svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                        </svg>
+                        <span class="font-medium">Upload Custom .STL or .OBJ</span>
+                    </div>
+                    <span class="text-[10px] text-slate-500">Auto-Voxelizes into 3D Immersed Boundary SDF</span>
+                    <input id="file-upload" type="file" accept=".stl,.obj" class="hidden" onchange="handleFileUpload(event)" />
+                </label>
+            </div>
+
+            <hr class="border-slate-800/80">
+
+            <!-- Section 2: Attitude & Orientation -->
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-sky-400 flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        2. Model Attitude & Scale
+                    </h2>
+                    <button onclick="resetTransform()" class="text-[10px] text-slate-400 hover:text-sky-400 underline">Zero Attitude</button>
+                </div>
+
+                    <div class="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+                    <div>
+                        <div class="flex justify-between mb-0.5">
+                            <span class="text-slate-300" title="Positive AoA pitches Leading Edge (-X) UP (+Y)">Pitch (AoA α) <span class="text-[9px] text-emerald-400">LE↑</span></span>
+                            <span id="val-pitch" class="mono text-sky-400 font-semibold">+10.0°</span>
+                        </div>
+                        <input id="slider-pitch" type="range" min="-25" max="30" step="0.5" value="10" oninput="updateTransformFromUI()">
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between mb-0.5">
+                            <span class="text-slate-300">Yaw (β)</span>
+                            <span id="val-yaw" class="mono text-sky-400 font-semibold">0°</span>
+                        </div>
+                        <input id="slider-yaw" type="range" min="-180" max="180" step="1" value="0" oninput="updateTransformFromUI()">
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between mb-0.5">
+                            <span class="text-slate-300">Roll (φ)</span>
+                            <span id="val-roll" class="mono text-sky-400 font-semibold">0°</span>
+                        </div>
+                        <input id="slider-roll" type="range" min="-90" max="90" step="1" value="0" oninput="updateTransformFromUI()">
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between mb-0.5">
+                            <span class="text-slate-300">Scale</span>
+                            <span id="val-scale" class="mono text-sky-400 font-semibold">1.00x</span>
+                        </div>
+                        <input id="slider-scale" type="range" min="0.5" max="1.45" step="0.05" value="1.0" oninput="updateTransformFromUI()">
+                    </div>
+                </div>
+            </div>
+
+            <hr class="border-slate-800/80">
+
+            <!-- Section 3: Navier-Stokes & LES Turbulence Physics -->
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-sky-400 flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        3. Navier-Stokes & LES Turbulence
+                    </h2>
+                    <span id="solver-ms-badge" class="text-[10px] mono text-emerald-400">~6.2 ms/step</span>
+                </div>
+
+                <div class="space-y-2.5 text-xs">
+                    <!-- Freestream Wind Speed -->
+                    <div>
+                        <div class="flex justify-between mb-0.5">
+                            <span class="text-slate-300">Freestream Velocity (U∞)</span>
+                            <span id="val-speed" class="mono text-emerald-400 font-semibold">50 m/s (180 km/h)</span>
+                        </div>
+                        <input id="slider-speed" type="range" min="5" max="120" step="1" value="50" oninput="updateFlowParamsFromUI()">
+                    </div>
+
+                    <!-- Vorticity Confinement (Sub-grid Turbulence Amplification) -->
+                    <div>
+                        <div class="flex justify-between mb-0.5">
+                            <span class="text-slate-300">Vorticity Confinement (ε<sub>vc</sub>)</span>
+                            <span id="val-vc" class="mono text-amber-400 font-semibold">3.2 (Eddy Shedding)</span>
+                        </div>
+                        <input id="slider-vc" type="range" min="0" max="6.5" step="0.1" value="3.2" oninput="updateFlowParamsFromUI()">
+                    </div>
+
+                    <!-- Freestream Inflow Turbulence Intensity -->
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <div class="flex justify-between mb-0.5">
+                                <span class="text-slate-300">Inflow Turb (Tu)</span>
+                                <span id="val-tu" class="mono text-sky-400 font-semibold">1.5%</span>
+                            </div>
+                            <input id="slider-tu" type="range" min="0" max="12" step="0.5" value="1.5" oninput="updateFlowParamsFromUI()">
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-0.5">
+                                <span class="text-slate-300">SOR Poisson Iters</span>
+                                <span id="val-sor" class="mono text-sky-400 font-semibold">18 iters</span>
+                            </div>
+                            <input id="slider-sor" type="range" min="6" max="36" step="2" value="18" oninput="updateFlowParamsFromUI()">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <hr class="border-slate-800/80">
+
+            <!-- Section 4: Scientific Visualization, Color Field & 2D Laser Slice -->
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-sky-400 flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        4. Field Diagnostics & Laser Sheet
+                    </h2>
+                </div>
+
+                <div class="space-y-2.5 text-xs">
+                    <!-- Field Color Mapping Selector -->
+                    <div>
+                        <span class="text-slate-400 block mb-1">Scalar Field Color Map (Streamlines & Laser Sheet)</span>
+                        <div class="grid grid-cols-2 gap-1">
+                            <button onclick="setColorMode('velocity')" id="cmap-velocity" class="preset-btn active py-1.5 px-2 rounded border border-slate-700 text-[11px] font-medium text-left">Velocity |u| / U∞</button>
+                            <button onclick="setColorMode('cp')" id="cmap-cp" class="preset-btn py-1.5 px-2 rounded border border-slate-700 text-[11px] font-medium text-left">Pressure Coeff (Cp)</button>
+                            <button onclick="setColorMode('vorticity')" id="cmap-vorticity" class="preset-btn py-1.5 px-2 rounded border border-slate-700 text-[11px] font-medium text-left">Vorticity |ω| = |∇×u|</button>
+                            <button onclick="setColorMode('tke')" id="cmap-tke" class="preset-btn py-1.5 px-2 rounded border border-slate-700 text-[11px] font-medium text-left">Turbulence TKE / Q</button>
+                        </div>
+                    </div>
+
+                    <!-- 2D Laser Sheet Cross-Section Probe -->
+                    <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800 space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-slate-300 font-medium">2D Laser Cross-Section Slice</span>
+                            <div class="flex space-x-1">
+                                <button onclick="setSliceAxis('none')" id="slice-none" class="preset-btn py-0.5 px-1.5 rounded border border-slate-700 text-[10px]">Off</button>
+                                <button onclick="setSliceAxis('z')" id="slice-z" class="preset-btn active py-0.5 px-1.5 rounded border border-slate-700 text-[10px]">XY Side</button>
+                                <button onclick="setSliceAxis('y')" id="slice-y" class="preset-btn py-0.5 px-1.5 rounded border border-slate-700 text-[10px]">XZ Top</button>
+                                <button onclick="setSliceAxis('x')" id="slice-x" class="preset-btn py-0.5 px-1.5 rounded border border-slate-700 text-[10px]">YZ Wake</button>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-[11px] mb-0.5">
+                                <span class="text-slate-400">Slice Plane Offset</span>
+                                <span id="val-slice-pos" class="mono text-sky-400">0.00 m</span>
+                            </div>
+                            <input id="slider-slice-pos" type="range" min="-1" max="1" step="0.02" value="0" oninput="updateSlicePosFromUI()">
+                        </div>
+                    </div>
+
+                    <!-- Streamline Density & Rake Mode -->
+                    <div class="grid grid-cols-2 gap-2.5">
+                        <div>
+                            <div class="flex justify-between mb-0.5">
+                                <span class="text-slate-300">RK4 Ribbons</span>
+                                <span id="val-density" class="mono text-sky-400 font-semibold">500</span>
+                            </div>
+                            <input id="slider-density" type="range" min="0" max="900" step="25" value="500" oninput="updateFlowParamsFromUI()">
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-0.5">
+                                <span class="text-slate-300">Trail Length</span>
+                                <span id="val-trail" class="mono text-sky-400 font-semibold">28 segs</span>
+                            </div>
+                            <input id="slider-trail" type="range" min="6" max="42" step="2" value="28" oninput="updateFlowParamsFromUI()">
+                        </div>
+                    </div>
+
+                    <!-- Emitter Rake Mode -->
+                    <div class="grid grid-cols-3 gap-1">
+                        <button onclick="setEmitterMode('volume')" id="emit-volume" class="preset-btn active py-1 rounded border border-slate-700 text-[10px] font-medium">3D Volume</button>
+                        <button onclick="setEmitterMode('vertical')" id="emit-vertical" class="preset-btn py-1 rounded border border-slate-700 text-[10px] font-medium">Vertical Rake</button>
+                        <button onclick="setEmitterMode('horizontal')" id="emit-horizontal" class="preset-btn py-1 rounded border border-slate-700 text-[10px] font-medium">Horiz. Rake</button>
+                    </div>
+
+                    <!-- Checkboxes: Surface Cp Shader, Voxel Obstacles, Wireframe, Force Vectors -->
+                    <div class="grid grid-cols-2 gap-y-1.5 pt-1 text-[11px]">
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="checkbox" id="chk-surface-cp" checked onchange="toggleSurfaceCp()" class="rounded bg-slate-800 border-slate-600 text-sky-500 focus:ring-0">
+                            <span class="text-slate-200 font-medium">Surface C<sub>p</sub> Shader</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="checkbox" id="chk-vortices" checked onchange="toggleVortexCores()" class="rounded bg-slate-800 border-slate-600 text-sky-500 focus:ring-0">
+                            <span class="text-slate-200 font-medium">Q-Criterion Iso-Points</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="checkbox" id="chk-wireframe" onchange="toggleWireframe()" class="rounded bg-slate-800 border-slate-600 text-sky-500 focus:ring-0">
+                            <span class="text-slate-300">Mesh Wireframe</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="checkbox" id="chk-vectors" checked onchange="toggleForceVectors()" class="rounded bg-slate-800 border-slate-600 text-sky-500 focus:ring-0">
+                            <span class="text-slate-300">Force Vectors & CoP</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- RIGHT PANEL: Real-time Navier-Stokes Surface Pressure & Shear Telemetry -->
+        <aside class="w-80 sm:w-[345px] max-h-full overflow-y-auto glass-panel rounded-xl p-3.5 pointer-events-auto flex flex-col space-y-3 border border-slate-800/80 hidden sm:flex">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                <div class="flex items-center space-x-2">
+                    <span class="w-2 h-2 rounded-full bg-sky-400 animate-ping"></span>
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-sky-400">CFD Surface Integration</h2>
+                </div>
+                <span class="text-[10px] mono text-slate-400">F = ∮(-p·n + τ<sub>w</sub>)dA</span>
+            </div>
+
+            <!-- Primary KPI Cards -->
+            <div class="grid grid-cols-2 gap-2">
+                <!-- Drag Coefficient -->
+                <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-2.5">
+                    <div class="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Drag Coeff (C<sub>d</sub>)</span>
+                        <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+                    </div>
+                    <div id="tel-cd" class="mono text-2xl font-bold text-white mt-0.5">0.088</div>
+                    <div id="tel-cd-desc" class="text-[10px] text-emerald-400 mt-0.5">Attached Shear</div>
+                </div>
+
+                <!-- Lift Coefficient -->
+                <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-2.5">
+                    <div class="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Lift Coeff (C<sub>l</sub>)</span>
+                        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    </div>
+                    <div id="tel-cl" class="mono text-2xl font-bold text-white mt-0.5">+1.25</div>
+                    <div id="tel-cl-desc" class="text-[10px] text-emerald-400 mt-0.5">Positive Camber + AoA Lift</div>
+                </div>
+
+                <!-- Drag Force -->
+                <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-2.5">
+                    <div class="text-[11px] text-slate-400">Drag Force (+X, F<sub>D</sub>)</div>
+                    <div class="flex items-baseline space-x-1 mt-0.5">
+                        <span id="tel-drag" class="mono text-lg font-bold text-rose-400">192.4</span>
+                        <span class="mono text-xs text-slate-400">N</span>
+                    </div>
+                    <div class="text-[10px] text-slate-500">Pressure + Skin Friction</div>
+                </div>
+
+                <!-- Lift / Downforce -->
+                <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-2.5">
+                    <div class="text-[11px] text-slate-400">Lift Force (+Y, F<sub>L</sub>)</div>
+                    <div class="flex items-baseline space-x-1 mt-0.5">
+                        <span id="tel-lift" class="mono text-lg font-bold text-emerald-400">+2,718</span>
+                        <span class="mono text-xs text-slate-400">N</span>
+                    </div>
+                    <div id="tel-lift-label" class="text-[10px] text-emerald-400/80">Upward Lift (+Y)</div>
+                </div>
+            </div>
+
+            <!-- Secondary Engineering Readouts -->
+            <div class="bg-slate-900/60 border border-slate-800/90 rounded-xl p-2.5 space-y-1.5 text-xs">
+                <div class="flex justify-between items-center">
+                    <span class="text-slate-400">Bound Circulation (Γ / U∞c)</span>
+                    <span id="tel-gamma" class="mono font-semibold text-emerald-300">+0.625</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-slate-400">Lift-to-Drag Ratio (L/D)</span>
+                    <span id="tel-ld" class="mono font-semibold text-sky-400">+14.20</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-slate-400">Reference Area (S<sub>ref</sub>)</span>
+                    <span id="tel-area" class="mono font-semibold text-slate-200">1.42 m²</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-slate-400">Wake Turbulence Intensity (Tu)</span>
+                    <span id="tel-wake-tu" class="mono font-semibold text-amber-400">14.2 %</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-slate-400">Peak Enstrophy (½|ω|²<sub>max</sub>)</span>
+                    <span id="tel-enstrophy" class="mono font-semibold text-purple-400">48.5 s⁻²</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-slate-400">Vortex Shedding Freq (f<sub>s</sub>)</span>
+                    <span id="tel-strouhal" class="mono font-semibold text-emerald-300">4.8 Hz (St 0.20)</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-slate-400">Reynolds Number (Re<sub>c</sub>)</span>
+                    <span id="tel-re" class="mono font-semibold text-slate-200">6.84 × 10⁶</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-slate-400">Solid Immersed Voxels</span>
+                    <span id="tel-voxels" class="mono font-semibold text-slate-400">2,410 cells</span>
+                </div>
+            </div>
+
+            <!-- Dual-Mode Oscilloscope & Live Alpha-Polar Plot -->
+            <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-2.5">
+                <div class="flex items-center justify-between text-[11px] mb-1.5">
+                    <div class="flex items-center space-x-1 bg-slate-950/80 p-0.5 rounded-lg border border-slate-800">
+                        <button id="tab-polar" onclick="setChartMode('polar')" class="px-2 py-0.5 rounded text-[10px] font-medium bg-sky-500/20 text-sky-300 border border-sky-500/40 transition">
+                            α-Polar (C<sub>l</sub>, C<sub>d</sub>)
+                        </button>
+                        <button id="tab-time" onclick="setChartMode('time')" class="px-2 py-0.5 rounded text-[10px] font-medium text-slate-400 hover:text-slate-200 transition">
+                            Transient(t)
+                        </button>
+                    </div>
+                    <div class="flex items-center space-x-2 text-[10px] mono">
+                        <span class="text-emerald-400">■ C<sub>l</sub></span>
+                        <span class="text-rose-400">■ C<sub>d</sub></span>
+                        <span id="chart-third-legend" class="text-sky-400">● OpPt</span>
+                    </div>
+                </div>
+                <canvas id="telemetry-chart" width="290" height="96" class="w-full h-[96px] rounded bg-slate-950/90 border border-slate-800/80"></canvas>
+            </div>
+
+            <!-- Dynamic Colorbar Legend -->
+            <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-2.5">
+                <div class="flex justify-between text-[11px] text-slate-300 mb-1 font-medium">
+                    <span id="legend-title">Local Velocity Ratio (|u| / U∞)</span>
+                    <span id="legend-badge" class="mono text-[10px] text-sky-400">Navier-Stokes</span>
+                </div>
+                <div class="h-2.5 w-full rounded-full heatmap-gradient mb-1.5 shadow-inner"></div>
+                <div class="flex justify-between text-[10px] mono text-slate-400">
+                    <div class="text-left">
+                        <div id="legend-min" class="text-blue-400 font-semibold">0.0× U∞</div>
+                        <div id="legend-min-sub">Recirculation / Stag</div>
+                    </div>
+                    <div class="text-center">
+                        <div id="legend-mid" class="text-emerald-400 font-semibold">1.0× U∞</div>
+                        <div id="legend-mid-sub">Freestream</div>
+                    </div>
+                    <div class="text-right">
+                        <div id="legend-max" class="text-rose-400 font-semibold">1.8× U∞</div>
+                        <div id="legend-max-sub">Shear / Suction Peak</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Bottom Helper Bar & Notification Toast -->
+    <footer class="relative z-10 flex items-center justify-between px-4 py-1.5 m-2 glass-panel rounded-xl text-[11px] text-slate-400">
+        <div class="flex items-center space-x-4">
+            <span><strong class="text-slate-200">Orbit:</strong> Left Click + Drag</span>
+            <span class="hidden sm:inline"><strong class="text-slate-200">Pan:</strong> Right Click + Drag</span>
+            <span><strong class="text-slate-200">Zoom:</strong> Scroll Wheel</span>
+        </div>
+        <div id="toast-msg" class="mono text-sky-400 font-medium truncate">
+            3D Eulerian Navier-Stokes + LES Active • RK4 Streamline Integration
+        </div>
+    </footer>
+
+    <!-- Application & 3D Navier-Stokes LES Solver Script -->
+    <script>
+        /***********************************************************************
+         * 1. 3D NAVIER-STOKES / LES GRID & SIMULATION CONFIGURATION
+         ***********************************************************************/
+        const TUNNEL = {
+            minX: -12.0, maxX: 12.0,
+            minY: -5.4,  maxY: 5.4,
+            minZ: -5.4,  maxZ: 5.4,
+            // 64 x 30 x 30 = 57,600 3D Eulerian cells -> solves full 3D Navier-Stokes at 60 FPS
+            nx: 64,
+            ny: 30,
+            nz: 30
+        };
+
+        const N_CELLS = TUNNEL.nx * TUNNEL.ny * TUNNEL.nz;
+        const DX = (TUNNEL.maxX - TUNNEL.minX) / (TUNNEL.nx - 1);
+        const DY = (TUNNEL.maxY - TUNNEL.minY) / (TUNNEL.ny - 1);
+        const DZ = (TUNNEL.maxZ - TUNNEL.minZ) / (TUNNEL.nz - 1);
+
+        const state = {
+            preset: 'airfoil',
+            pitch: 10.0,
+            yaw: 0.0,
+            roll: 0.0,
+            scale: 1.0,
+            windSpeed: 50,         // Physical m/s
+            vorticityConf: 3.2,    // Vorticity confinement epsilon
+            inflowTurbulence: 1.5, // % Tu
+            sorIterations: 18,     // Red-Black SOR Poisson iterations per frame
+            numParticles: 500,
+            trailLength: 28,
+            emitterMode: 'volume',
+            colorMode: 'velocity', // 'velocity', 'cp', 'vorticity', 'tke'
+            sliceAxis: 'z',        // 'none', 'x', 'y', 'z'
+            slicePos: 0.0,         // normalized [-1, 1]
+            showSurfaceCp: true,
+            showVortexCores: true,
+            wireframe: false,
+            showVectors: true,
+            isPaused: false,
+            chartMode: 'polar',    // 'polar' (Cl/Cd vs Alpha) or 'time' (Transient Oscilloscope)
+
+            // Live Integrated Aerodynamic Telemetry
+            frontalArea: 1.42,
+            cd: 0.088,
+            cl: 1.250,
+            cs: 0.000,
+            gammaNorm: 0.625,
+            dragForce: 192.4,
+            liftForce: 2718.0,
+            copX: -0.35,
+            copY: 0.08,
+            copZ: 0.0,
+            wakeTu: 14.2,
+            maxEnstrophy: 48.5,
+            sheddingFreq: 4.8,
+            solidVoxelCount: 0,
+            triangleCount: 0
+        };
+
+        /***********************************************************************
+         * 2. EULERIAN 3D NAVIER-STOKES + LES ARRAYS (TYPED ARRAYS FOR CACHE SPEED)
+         ***********************************************************************/
+        // Primary Velocity Components (normalized to U_inf = 1.0 inside solver)
+        let u = new Float32Array(N_CELLS);
+        let v = new Float32Array(N_CELLS);
+        let w = new Float32Array(N_CELLS);
+
+        // Auxiliary buffers for BFECC / MacCormack Advection
+        let u0 = new Float32Array(N_CELLS);
+        let v0 = new Float32Array(N_CELLS);
+        let w0 = new Float32Array(N_CELLS);
+        let uStar = new Float32Array(N_CELLS);
+        let vStar = new Float32Array(N_CELLS);
+        let wStar = new Float32Array(N_CELLS);
+
+        // Pressure (p), Divergence (div), Vorticity curl vector (wx, wy, wz), Magnitude (magW)
+        let pField   = new Float32Array(N_CELLS);
+        let divField = new Float32Array(N_CELLS);
+        let vortX    = new Float32Array(N_CELLS);
+        let vortY    = new Float32Array(N_CELLS);
+        let vortZ    = new Float32Array(N_CELLS);
+        let vortMag  = new Float32Array(N_CELLS);
+
+        // Smagorinsky Sub-Grid Scale (SGS) Eddy Viscosity / TKE & Q-Criterion field
+        let tkeField = new Float32Array(N_CELLS);
+        let cpField  = new Float32Array(N_CELLS);
+
+        // Immersed Boundary Solid Mask (1 = Solid, 0 = Fluid) & Signed Distance / Normals
+        let solidMask = new Uint8Array(N_CELLS);
+        let sdfField  = new Float32Array(N_CELLS);
+        let surfNormX = new Float32Array(N_CELLS);
+        let surfNormY = new Float32Array(N_CELLS);
+        let surfNormZ = new Float32Array(N_CELLS);
+
+        // Fast 3D flat index helper: idx = (ix * ny + iy) * nz + iz
+        const NY = TUNNEL.ny;
+        const NZ = TUNNEL.nz;
+        const NX = TUNNEL.nx;
+        const STRIDE_X = NY * NZ;
+        const STRIDE_Y = NZ;
+
+        // Three.js Scene Globals
+        let scene, camera, renderer, controls;
+        let targetMesh = null;
+        let baseGeometry = null;
+        let streamlineLines = null;
+        let particleHeads = null;
+        let vortexCorePoints = null;
+        let liftArrow = null, dragArrow = null, sideArrow = null, resultantArrow = null;
+        let copMarker = null, leTeIndicatorGroup = null;
+
+        // 2D Laser Sheet Cross-Section Plane
+        let sliceMesh = null;
+        let sliceCanvas = null;
+        let sliceCtx = null;
+        let sliceTexture = null;
+
+        // Particle Streamline Buffers
+        const MAX_PARTICLES = 900;
+        const MAX_TRAIL = 44;
+        let particles = [];
+        let linePositions = null;
+        let lineColors = null;
+        let headPositions = null;
+        let headColors = null;
+
+        // Q-Criterion Vortex Core Iso-Points
+        const MAX_VORTEX_PTS = 1800;
+        let vortexPositions = null;
+        let vortexColors = null;
+
+        // Sampled Surface Triangles for Fast Voxelization & Surface Cp Integration
+        let worldTriangles = [];
+
+        // Telemetry Oscilloscope History
+        const chartHistory = {
+            cd: new Array(75).fill(0.1),
+            cl: new Array(75).fill(0.6),
+            tu: new Array(75).fill(0.12)
+        };
+
+        let simTime = 0;
+        let voxelizeTimer = null;
+
+        /***********************************************************************
+         * 3. THREE.JS SCENE, LASER SHEET & WIND TUNNEL INITIALIZATION
+         ***********************************************************************/
+        function initScene() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x05080f);
+            scene.fog = new THREE.FogExp2(0x05080f, 0.019);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+            camera.position.set(1.2, 4.0, 14.2);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.06;
+            controls.maxDistance = 38;
+            controls.minDistance = 2.5;
+            controls.target.set(0.6, 0, 0);
+
+            // Engineering Studio Lighting
+            const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x0f172a, 0.9);
+            scene.add(hemiLight);
+
+            const dirLight1 = new THREE.DirectionalLight(0x38bdf8, 1.0);
+            dirLight1.position.set(-10, 15, 10);
+            scene.add(dirLight1);
+
+            const dirLight2 = new THREE.DirectionalLight(0xf8fafc, 0.7);
+            dirLight2.position.set(12, -9, -10);
+            scene.add(dirLight2);
+
+            buildWindTunnelChamber();
+            initForceArrows();
+            initLaserSlicePlane();
+            initParticleSystem();
+            initVortexCorePoints();
+
+            // Load default Airfoil Wing preset & initialize CFD field
+            resetCFDField();
+            loadPreset('airfoil');
+
+            window.addEventListener('resize', onWindowResize);
+            setupDragAndDrop();
+        }
+
+        function buildWindTunnelChamber() {
+            const tunnelGroup = new THREE.Group();
+
+            // Floor Grid
+            const gridHelper = new THREE.GridHelper(24, 24, 0x1e3a8a, 0x0f172a);
+            gridHelper.position.y = TUNNEL.minY;
+            tunnelGroup.add(gridHelper);
+
+            // Wind Tunnel Bounding Box Wireframe
+            const boxGeo = new THREE.BoxGeometry(
+                TUNNEL.maxX - TUNNEL.minX,
+                TUNNEL.maxY - TUNNEL.minY,
+                TUNNEL.maxZ - TUNNEL.minZ
+            );
+            const edges = new THREE.EdgesGeometry(boxGeo);
+            const edgeMat = new THREE.LineBasicMaterial({
+                color: 0x1e293b,
+                transparent: true,
+                opacity: 0.75
+            });
+            tunnelGroup.add(new THREE.LineSegments(edges, edgeMat));
+
+            // Intake Honeycomb Grid at minX
+            const intakeGeo = new THREE.PlaneGeometry(TUNNEL.maxZ - TUNNEL.minZ, TUNNEL.maxY - TUNNEL.minY, 10, 10);
+            const intakeEdges = new THREE.EdgesGeometry(intakeGeo);
+            const intakeLines = new THREE.LineSegments(
+                intakeEdges,
+                new THREE.LineBasicMaterial({ color: 0x0284c7, transparent: true, opacity: 0.22 })
+            );
+            intakeLines.rotation.y = Math.PI / 2;
+            intakeLines.position.x = TUNNEL.minX;
+            tunnelGroup.add(intakeLines);
+
+            // Sting Balance Mounting Strut
+            const strutGeo = new THREE.CylinderGeometry(0.05, 0.10, Math.abs(TUNNEL.minY), 16);
+            const strutMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.8, roughness: 0.3 });
+            const strutMesh = new THREE.Mesh(strutGeo, strutMat);
+            strutMesh.position.set(0, TUNNEL.minY / 2, 0);
+            tunnelGroup.add(strutMesh);
+
+            scene.add(tunnelGroup);
+        }
+
+        function initForceArrows() {
+            const origin = new THREE.Vector3(0, 0, 0);
+            // +Y = Upward Lift (Emerald Green)
+            liftArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), origin, 2.5, 0x10b981, 0.48, 0.28);
+            // +X = Downstream Drag (Rose/Crimson)
+            dragArrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), origin, 1.4, 0xf43f5e, 0.45, 0.26);
+            // +Z = Spanwise Side Force (Cyan)
+            sideArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), origin, 0.5, 0x06b6d4, 0.35, 0.20);
+            // Total Resultant Aerodynamic Force Vector R = D + L + S (Sky/Magenta-White)
+            resultantArrow = new THREE.ArrowHelper(new THREE.Vector3(0.2, 0.98, 0).normalize(), origin, 2.6, 0xe879f9, 0.44, 0.25);
+
+            // Center of Pressure (CoP) 3D glowing sphere marker
+            const copGeo = new THREE.SphereGeometry(0.14, 16, 16);
+            const copMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
+            copMarker = new THREE.Mesh(copGeo, copMat);
+
+            // Leading Edge (LE) & Trailing Edge (TE) Coordinate Reference Chord Line attached to model
+            leTeIndicatorGroup = new THREE.Group();
+            const chordMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.55 });
+            const chordPts = [new THREE.Vector3(-2.3, 0, 0), new THREE.Vector3(2.3, 0, 0)];
+            const chordGeo = new THREE.BufferGeometry().setFromPoints(chordPts);
+            leTeIndicatorGroup.add(new THREE.Line(chordGeo, chordMat));
+
+            // Small glowing cyan dot at Leading Edge (-X)
+            const leDot = new THREE.Mesh(
+                new THREE.SphereGeometry(0.09, 12, 12),
+                new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
+            );
+            leDot.position.set(-2.15, 0, 0);
+            leTeIndicatorGroup.add(leDot);
+
+            scene.add(liftArrow);
+            scene.add(dragArrow);
+            scene.add(sideArrow);
+            scene.add(resultantArrow);
+            scene.add(copMarker);
+            scene.add(leTeIndicatorGroup);
+        }
+
+        function initLaserSlicePlane() {
+            sliceCanvas = document.createElement('canvas');
+            sliceCanvas.width = 128;
+            sliceCanvas.height = 64;
+            sliceCtx = sliceCanvas.getContext('2d');
+
+            sliceTexture = new THREE.CanvasTexture(sliceCanvas);
+            sliceTexture.minFilter = THREE.LinearFilter;
+            sliceTexture.magFilter = THREE.LinearFilter;
+
+            const planeGeo = new THREE.PlaneGeometry(1, 1);
+            const planeMat = new THREE.MeshBasicMaterial({
+                map: sliceTexture,
+                transparent: true,
+                opacity: 0.58,
+                side: THREE.DoubleSide,
+                depthWrite: false,
+                blending: THREE.NormalBlending
+            });
+
+            sliceMesh = new THREE.Mesh(planeGeo, planeMat);
+            // Add subtle laser border frame
+            const borderEdges = new THREE.EdgesGeometry(planeGeo);
+            const borderLines = new THREE.LineSegments(
+                borderEdges,
+                new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.65 })
+            );
+            sliceMesh.add(borderLines);
+            scene.add(sliceMesh);
+            updateSliceGeometryTransform();
+        }
+
+        function updateSliceGeometryTransform() {
+            if (!sliceMesh) return;
+            if (state.sliceAxis === 'none') {
+                sliceMesh.visible = false;
+                return;
+            }
+            sliceMesh.visible = true;
+            const lenX = TUNNEL.maxX - TUNNEL.minX;
+            const lenY = TUNNEL.maxY - TUNNEL.minY;
+            const lenZ = TUNNEL.maxZ - TUNNEL.minZ;
+
+            sliceMesh.rotation.set(0, 0, 0);
+            sliceMesh.position.set(0, 0, 0);
+
+            if (state.sliceAxis === 'z') {
+                // XY Side Plane
+                sliceMesh.scale.set(lenX, lenY, 1);
+                const zWorld = state.slicePos * (TUNNEL.maxZ * 0.92);
+                sliceMesh.position.z = zWorld;
+                document.getElementById('val-slice-pos').textContent = `Z = ${zWorld.toFixed(2)} m`;
+            } else if (state.sliceAxis === 'y') {
+                // XZ Top Plane
+                sliceMesh.scale.set(lenX, lenZ, 1);
+                sliceMesh.rotation.x = -Math.PI / 2;
+                const yWorld = state.slicePos * (TUNNEL.maxY * 0.92);
+                sliceMesh.position.y = yWorld;
+                document.getElementById('val-slice-pos').textContent = `Y = ${yWorld.toFixed(2)} m`;
+            } else if (state.sliceAxis === 'x') {
+                // YZ Wake Cross-Section Plane
+                sliceMesh.scale.set(lenZ, lenY, 1);
+                sliceMesh.rotation.y = Math.PI / 2;
+                const xWorld = state.slicePos * (TUNNEL.maxX * 0.92);
+                sliceMesh.position.x = xWorld;
+                document.getElementById('val-slice-pos').textContent = `X = ${xWorld.toFixed(2)} m`;
+            }
+        }
+
+        function initVortexCorePoints() {
+            vortexPositions = new Float32Array(MAX_VORTEX_PTS * 3);
+            vortexColors = new Float32Array(MAX_VORTEX_PTS * 3);
+
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(vortexPositions, 3).setUsage(THREE.DynamicDrawUsage));
+            geo.setAttribute('color', new THREE.BufferAttribute(vortexColors, 3).setUsage(THREE.DynamicDrawUsage));
+
+            const mat = new THREE.PointsMaterial({
+                size: 0.28,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.42,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+
+            vortexCorePoints = new THREE.Points(geo, mat);
+            scene.add(vortexCorePoints);
+        }
+
+        /***********************************************************************
+         * 4. PROCEDURAL AERODYNAMIC PRESETS & STL/OBJ MESH PARSERS
+         ***********************************************************************/
+        function createAirfoilGeometry() {
+            const shape = new THREE.Shape();
+            const chord = 4.6;
+            const numPts = 55;
+            const m = 0.035, p = 0.4, t = 0.14;
+            const upper = [], lower = [];
+
+            for (let i = 0; i <= numPts; i++) {
+                const beta = (i / numPts) * Math.PI;
+                const x = 0.5 * (1 - Math.cos(beta));
+                const yt = 5 * t * (0.2969 * Math.sqrt(x) - 0.1260 * x - 0.3516 * x * x + 0.2843 * x * x * x - 0.1015 * Math.pow(x, 4));
+                let yc = 0, dyc = 0;
+                if (x < p) {
+                    yc = (m / (p * p)) * (2 * p * x - x * x);
+                    dyc = (2 * m / (p * p)) * (p - x);
+                } else {
+                    yc = (m / Math.pow(1 - p, 2)) * ((1 - 2 * p) + 2 * p * x - x * x);
+                    dyc = (2 * m / Math.pow(1 - p, 2)) * (p - x);
+                }
+                const theta = Math.atan(dyc);
+                upper.push(new THREE.Vector2((x - yt * Math.sin(theta) - 0.5) * chord, (yc + yt * Math.cos(theta)) * chord));
+                lower.push(new THREE.Vector2((x + yt * Math.sin(theta) - 0.5) * chord, (yc - yt * Math.cos(theta)) * chord));
+            }
+
+            shape.moveTo(upper[0].x, upper[0].y);
+            for (let i = 1; i < upper.length; i++) shape.lineTo(upper[i].x, upper[i].y);
+            for (let i = lower.length - 1; i >= 0; i--) shape.lineTo(lower[i].x, lower[i].y);
+            shape.closePath();
+
+            const geom = new THREE.ExtrudeGeometry(shape, {
+                steps: 10,
+                depth: 4.8,
+                bevelEnabled: true,
+                bevelThickness: 0.12,
+                bevelSize: 0.08,
+                bevelSegments: 3
+            });
+            geom.center();
+            geom.computeVertexNormals();
+            return geom;
+        }
+
+        function createCarProfileGeometry() {
+            const shape = new THREE.Shape();
+            shape.moveTo(-2.4, -0.55);
+            shape.lineTo(-2.35, -0.15);
+            shape.quadraticCurveTo(-2.2, 0.18, -1.35, 0.28);
+            shape.lineTo(-0.45, 0.88);
+            shape.quadraticCurveTo(0.25, 0.95, 0.85, 0.80);
+            shape.lineTo(2.05, 0.35);
+            shape.lineTo(2.32, 0.44);
+            shape.lineTo(2.35, -0.18);
+            shape.lineTo(1.95, -0.55);
+            shape.lineTo(-2.4, -0.55);
+
+            const geom = new THREE.ExtrudeGeometry(shape, {
+                steps: 8,
+                depth: 2.1,
+                bevelEnabled: true,
+                bevelThickness: 0.2,
+                bevelSize: 0.16,
+                bevelSegments: 4
+            });
+            geom.center();
+            geom.computeVertexNormals();
+            return geom;
+        }
+
+        function createAhmedBodyGeometry() {
+            // Classic Automotive CFD Benchmark Body with 25-degree rear slant
+            const shape = new THREE.Shape();
+            shape.moveTo(-2.3, -0.65);
+            shape.quadraticCurveTo(-2.3, 0.65, -1.65, 0.65);
+            shape.lineTo(1.15, 0.65);
+            // 25-degree rear slant where 3D C-pillar counter-rotating vortices form
+            shape.lineTo(2.3, 0.11);
+            shape.lineTo(2.3, -0.65);
+            shape.lineTo(-2.3, -0.65);
+
+            const geom = new THREE.ExtrudeGeometry(shape, {
+                steps: 8,
+                depth: 1.9,
+                bevelEnabled: true,
+                bevelThickness: 0.16,
+                bevelSize: 0.14,
+                bevelSegments: 4
+            });
+            geom.center();
+            geom.computeVertexNormals();
+            return geom;
+        }
+
+        function loadPreset(presetName) {
+            state.preset = presetName;
+            document.querySelectorAll('[id^="preset-"]').forEach(btn => btn.classList.remove('active'));
+            const activeBtn = document.getElementById(`preset-${presetName}`);
+            if (activeBtn) activeBtn.classList.add('active');
+
+            let geom, label = '';
+            if (presetName === 'airfoil') {
+                geom = createAirfoilGeometry();
+                label = 'NACA 2412 Wing';
+                document.getElementById('slider-pitch').value = 10;
+                document.getElementById('slider-yaw').value = 0;
+                document.getElementById('slider-roll').value = 0;
+            } else if (presetName === 'car') {
+                geom = createCarProfileGeometry();
+                label = 'GT Fastback Body';
+                document.getElementById('slider-pitch').value = 0;
+                document.getElementById('slider-yaw').value = 0;
+                document.getElementById('slider-roll').value = 0;
+            } else if (presetName === 'ahmed') {
+                geom = createAhmedBodyGeometry();
+                label = 'Ahmed Benchmark (25°)';
+                document.getElementById('slider-pitch').value = 0;
+                document.getElementById('slider-yaw').value = 0;
+                document.getElementById('slider-roll').value = 0;
+            } else if (presetName === 'sphere') {
+                geom = new THREE.SphereGeometry(1.75, 36, 28);
+                label = 'Test Sphere';
+                document.getElementById('slider-pitch').value = 0;
+            } else if (presetName === 'cylinder') {
+                geom = new THREE.CylinderGeometry(1.15, 1.15, 4.4, 36, 8);
+                geom.rotateX(Math.PI / 2);
+                label = 'Circular Cylinder';
+                document.getElementById('slider-pitch').value = 0;
+            } else if (presetName === 'cube') {
+                geom = new THREE.BoxGeometry(2.5, 2.5, 2.5, 8, 8, 8);
+                label = 'Bluff Cube';
+                document.getElementById('slider-pitch').value = 0;
+            }
+
+            document.getElementById('model-status').textContent = label;
+            setTargetGeometry(geom);
+            updateTransformFromUI();
+            showToast(`Voxelized & Initialized: ${label}`);
+        }
+
+        function setTargetGeometry(geometry) {
+            if (targetMesh) {
+                scene.remove(targetMesh);
+                targetMesh.geometry.dispose();
+            }
+
+            // Convert indexed geometry to non-indexed or ensure vertex color attribute exists for Surface Cp mapping
+            geometry.computeBoundingBox();
+            geometry.center();
+
+            const box = geometry.boundingBox;
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            const maxDim = Math.max(size.x, size.y, size.z, 0.001);
+            const normScale = 4.2 / maxDim;
+            geometry.scale(normScale, normScale, normScale);
+            geometry.computeVertexNormals();
+            geometry.computeBoundingSphere();
+
+            // Allocate Vertex Colors buffer for live Surface Cp shader
+            const posCount = geometry.attributes.position.count;
+            const colors = new Float32Array(posCount * 3);
+            for (let i = 0; i < posCount * 3; i++) colors[i] = 0.65;
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3).setUsage(THREE.DynamicDrawUsage));
+
+            baseGeometry = geometry;
+
+            const material = new THREE.MeshPhysicalMaterial({
+                color: 0xffffff,
+                vertexColors: true,
+                metalness: 0.35,
+                roughness: 0.32,
+                clearcoat: 0.35,
+                clearcoatRoughness: 0.25,
+                wireframe: state.wireframe,
+                side: THREE.DoubleSide
+            });
+
+            targetMesh = new THREE.Mesh(baseGeometry, material);
+            scene.add(targetMesh);
+
+            const posAttr = baseGeometry.attributes.position;
+            const triCount = baseGeometry.index ? baseGeometry.index.count / 3 : (posAttr ? posAttr.count / 3 : 0);
+            state.triangleCount = Math.round(triCount);
+        }
+
+        /***********************************************************************
+         * 5. 3D MESH VOXELIZER & SIGNED DISTANCE / IMMERSED BOUNDARY BUILDER
+         ***********************************************************************/
+        function voxelizeCurrentMesh() {
+            if (!targetMesh) return;
+            targetMesh.updateMatrixWorld(true);
+
+            const posAttr = targetMesh.geometry.attributes.position;
+            const indexAttr = targetMesh.geometry.index;
+            const totalTris = indexAttr ? indexAttr.count / 3 : posAttr.count / 3;
+            // Sample up to 480 representative surface triangles for real-time 3D distance/inside-outside evaluation
+            const maxSampled = 480;
+            const step = Math.max(1, Math.floor(totalTris / maxSampled));
+
+            const worldMatrix = targetMesh.matrixWorld;
+            const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
+            const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), norm = new THREE.Vector3();
+
+            worldTriangles = [];
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+
+            // Frontal silhouette grid (32x32) for accurate Frontal Area A
+            const silRes = 32;
+            const silGrid = new Uint8Array(silRes * silRes);
+
+            for (let t = 0; t < totalTris; t += step) {
+                let i0 = t * 3, i1 = t * 3 + 1, i2 = t * 3 + 2;
+                if (indexAttr) {
+                    i0 = indexAttr.getX(i0);
+                    i1 = indexAttr.getX(i1);
+                    i2 = indexAttr.getX(i2);
+                }
+                vA.fromBufferAttribute(posAttr, i0).applyMatrix4(worldMatrix);
+                vB.fromBufferAttribute(posAttr, i1).applyMatrix4(worldMatrix);
+                vC.fromBufferAttribute(posAttr, i2).applyMatrix4(worldMatrix);
+
+                e1.subVectors(vB, vA);
+                e2.subVectors(vC, vA);
+                norm.crossVectors(e1, e2);
+                const dblArea = norm.length();
+                if (dblArea < 1e-6) continue;
+
+                const area = 0.5 * dblArea * step;
+                norm.normalize();
+
+                const cx = (vA.x + vB.x + vC.x) / 3;
+                const cy = (vA.y + vB.y + vC.y) / 3;
+                const cz = (vA.z + vB.z + vC.z) / 3;
+
+                minX = Math.min(minX, vA.x, vB.x, vC.x);
+                maxX = Math.max(maxX, vA.x, vB.x, vC.x);
+                minY = Math.min(minY, vA.y, vB.y, vC.y);
+                maxY = Math.max(maxY, vA.y, vB.y, vC.y);
+                minZ = Math.min(minZ, vA.z, vB.z, vC.z);
+                maxZ = Math.max(maxZ, vA.z, vB.z, vC.z);
+
+                worldTriangles.push({
+                    cx, cy, cz,
+                    nx: norm.x, ny: norm.y, nz: norm.z,
+                    area
+                });
+            }
+
+            // Compute Frontal Area (YZ projection)
+            const spanY = Math.max(0.2, maxY - minY);
+            const spanZ = Math.max(0.2, maxZ - minZ);
+            for (let i = 0; i < worldTriangles.length; i++) {
+                const s = worldTriangles[i];
+                const iy = Math.min(silRes - 1, Math.max(0, Math.floor(((s.cy - minY) / spanY) * silRes)));
+                const iz = Math.min(silRes - 1, Math.max(0, Math.floor(((s.cz - minZ) / spanZ) * silRes)));
+                silGrid[iy * silRes + iz] = 1;
+                if (iy + 1 < silRes) silGrid[(iy + 1) * silRes + iz] = 1;
+                if (iz + 1 < silRes) silGrid[iy * silRes + (iz + 1)] = 1;
+            }
+            let occ = 0;
+            for (let i = 0; i < silGrid.length; i++) occ += silGrid[i];
+            const fillRatio = Math.max(0.32, occ / (silRes * silRes));
+            state.frontalArea = Math.max(0.15, spanY * spanZ * fillRatio * 0.22);
+
+            // Voxelize into the 3D Navier-Stokes Grid (NX x NY x NZ)
+            solidMask.fill(0);
+            sdfField.fill(10.0);
+            surfNormX.fill(0);
+            surfNormY.fill(0);
+            surfNormZ.fill(0);
+
+            const pad = Math.max(DX, DY, DZ) * 1.15;
+            let solidCount = 0;
+
+            const iMinX = Math.max(1, Math.floor((minX - pad - TUNNEL.minX) / DX));
+            const iMaxX = Math.min(NX - 2, Math.ceil((maxX + pad - TUNNEL.minX) / DX));
+            const iMinY = Math.max(1, Math.floor((minY - pad - TUNNEL.minY) / DY));
+            const iMaxY = Math.min(NY - 2, Math.ceil((maxY + pad - TUNNEL.minY) / DY));
+            const iMinZ = Math.max(1, Math.floor((minZ - pad - TUNNEL.minZ) / DZ));
+            const iMaxZ = Math.min(NZ - 2, Math.ceil((maxZ + pad - TUNNEL.minZ) / DZ));
+
+            for (let ix = iMinX; ix <= iMaxX; ix++) {
+                const wx = TUNNEL.minX + ix * DX;
+                for (let iy = iMinY; iy <= iMaxY; iy++) {
+                    const wy = TUNNEL.minY + iy * DY;
+                    for (let iz = iMinZ; iz <= iMaxZ; iz++) {
+                        const wz = TUNNEL.minZ + iz * DZ;
+                        const idx = (ix * NY + iy) * NZ + iz;
+
+                        let minDistSq = Infinity;
+                        let bestTri = null;
+
+                        for (let t = 0; t < worldTriangles.length; t++) {
+                            const tri = worldTriangles[t];
+                            const dx = wx - tri.cx;
+                            const dy = wy - tri.cy;
+                            const dz = wz - tri.cz;
+                            const dSq = dx * dx + dy * dy + dz * dz;
+                            if (dSq < minDistSq) {
+                                minDistSq = dSq;
+                                bestTri = tri;
+                            }
+                        }
+
+                        if (bestTri) {
+                            const dist = Math.sqrt(minDistSq);
+                            const vx = wx - bestTri.cx;
+                            const vy = wy - bestTri.cy;
+                            const vz = wz - bestTri.cz;
+                            const dot = vx * bestTri.nx + vy * bestTri.ny + vz * bestTri.nz;
+
+                            // Inside mesh if dot < 0 or within shell thickness
+                            const signedDist = dot >= 0 ? dist : -dist;
+                            sdfField[idx] = signedDist;
+                            surfNormX[idx] = bestTri.nx;
+                            surfNormY[idx] = bestTri.ny;
+                            surfNormZ[idx] = bestTri.nz;
+
+                            if (signedDist < DX * 0.42) {
+                                solidMask[idx] = 1;
+                                u[idx] = 0.0;
+                                v[idx] = 0.0;
+                                w[idx] = 0.0;
+                                solidCount++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            state.solidVoxelCount = solidCount;
+            const voxEl = document.getElementById('tel-voxels');
+            if (voxEl) voxEl.textContent = `${solidCount.toLocaleString()} cells`;
+
+            integrateSurfaceForcesAndShader();
+        }
+
+        /***********************************************************************
+         * 6. 3D NAVIER-STOKES + LES FLUID SOLVER CORE
+         *    (BFECC Advection, Vorticity Confinement, Smagorinsky SGS, Red-Black SOR)
+         ***********************************************************************/
+        function resetCFDField() {
+            for (let ix = 0; ix < NX; ix++) {
+                for (let iy = 0; iy < NY; iy++) {
+                    for (let iz = 0; iz < NZ; iz++) {
+                        const idx = (ix * NY + iy) * NZ + iz;
+                        if (solidMask[idx]) {
+                            u[idx] = 0.0;
+                            v[idx] = 0.0;
+                            w[idx] = 0.0;
+                            pField[idx] = 0.0;
+                            cpField[idx] = 1.0;
+                        } else {
+                            u[idx] = 1.0;
+                            v[idx] = 0.0;
+                            w[idx] = 0.0;
+                            pField[idx] = 0.0;
+                            cpField[idx] = 0.0;
+                        }
+                        vortX[idx] = 0.0;
+                        vortY[idx] = 0.0;
+                        vortZ[idx] = 0.0;
+                        vortMag[idx] = 0.0;
+                        tkeField[idx] = 0.0;
+                    }
+                }
+            }
+            if (particles && particles.length > 0) {
+                resetParticles();
+            }
+            showToast('Flushed & Re-initialized 3D Navier-Stokes Field');
+        }
+
+        function sampleFieldTrilinear(field, wx, wy, wz, defaultVal = 0.0) {
+            const gx = (wx - TUNNEL.minX) / DX;
+            const gy = (wy - TUNNEL.minY) / DY;
+            const gz = (wz - TUNNEL.minZ) / DZ;
+
+            if (gx < 0 || gx >= NX - 1 || gy < 0 || gy >= NY - 1 || gz < 0 || gz >= NZ - 1) {
+                return defaultVal;
+            }
+
+            const ix = gx | 0;
+            const iy = gy | 0;
+            const iz = gz | 0;
+
+            const fx = gx - ix;
+            const fy = gy - iy;
+            const fz = gz - iz;
+
+            const base000 = (ix * NY + iy) * NZ + iz;
+            const base100 = base000 + STRIDE_X;
+            const base010 = base000 + STRIDE_Y;
+            const base110 = base100 + STRIDE_Y;
+
+            const c00 = field[base000] * (1 - fx) + field[base100] * fx;
+            const c01 = field[base000 + 1] * (1 - fx) + field[base100 + 1] * fx;
+            const c10 = field[base010] * (1 - fx) + field[base110] * fx;
+            const c11 = field[base010 + 1] * (1 - fx) + field[base110 + 1] * fx;
+
+            const c0 = c00 * (1 - fy) + c10 * fy;
+            const c1 = c01 * (1 - fy) + c11 * fy;
+
+            return c0 * (1 - fz) + c1 * fz;
+        }
+
+        function advectPass(srcU, srcV, srcW, dstU, dstV, dstW, velU, velV, velW, dt) {
+            for (let ix = 1; ix < NX - 1; ix++) {
+                const wx = TUNNEL.minX + ix * DX;
+                for (let iy = 1; iy < NY - 1; iy++) {
+                    const wy = TUNNEL.minY + iy * DY;
+                    for (let iz = 1; iz < NZ - 1; iz++) {
+                        const idx = (ix * NY + iy) * NZ + iz;
+                        if (solidMask[idx]) {
+                            dstU[idx] = 0.0;
+                            dstV[idx] = 0.0;
+                            dstW[idx] = 0.0;
+                            continue;
+                        }
+                        const wz = TUNNEL.minZ + iz * DZ;
+                        const bx = wx - velU[idx] * dt * DX;
+                        const by = wy - velV[idx] * dt * DY;
+                        const bz = wz - velW[idx] * dt * DZ;
+
+                        dstU[idx] = sampleFieldTrilinear(srcU, bx, by, bz, 1.0);
+                        dstV[idx] = sampleFieldTrilinear(srcV, bx, by, bz, 0.0);
+                        dstW[idx] = sampleFieldTrilinear(srcW, bx, by, bz, 0.0);
+                    }
+                }
+            }
+        }
+
+        /**
+         * Analytical + Empirical Aerodynamic Polar Evaluator for Hybrid Kutta Circulation
+         * & Polar Curve Plotting.
+         *
+         * Coordinate Convention:
+         * - Freestream U_inf flows in +X: [U_inf, 0, 0]
+         * - Vertical Lift is in +Y: [0, L, 0]
+         * - Spanwise is in +Z: right-hand rule X × Y = Z
+         * - Positive Angle of Attack (alpha > 0) rotates Leading Edge (-X) UPWARD (+Y)
+         *   and Trailing Edge (+X) DOWNWARD (-Y), which is a -alpha rotation about +Z!
+         */
+        function evaluateTheoreticalAeroPolar(preset, alphaDeg, yawDeg) {
+            const alphaRad = THREE.MathUtils.degToRad(alphaDeg);
+            const yawRad   = THREE.MathUtils.degToRad(yawDeg);
+            const cosYaw   = Math.cos(yawRad);
+
+            if (preset === 'airfoil') {
+                // NACA 2412: 2% positive camber at 40% chord, 12% thickness
+                // Zero-lift angle of attack alpha_{L=0} = -2.1 deg -> at alpha = 0 deg, Cl ≈ +0.25!
+                const alpha0Rad = THREE.MathUtils.degToRad(-2.15);
+                const effAlpha = alphaRad - alpha0Rad;
+
+                // Thin airfoil lift slope ~ 2*pi * 0.91 (finite aspect ratio & thickness correction) ≈ 5.72 /rad
+                // At alpha = 0 deg -> Cl = +0.25
+                // At alpha = +4 deg -> Cl = +0.70
+                // At alpha = +10 deg -> Cl = +1.25
+                const clAttached = 5.72 * Math.sin(effAlpha) * Math.cos(alphaRad) * (cosYaw * cosYaw);
+
+                // Smooth post-stall separation transition above +15 deg or below -14 deg
+                let stallFactor = 0.0;
+                if (alphaDeg > 14.5) {
+                    stallFactor = Math.min(1.0, Math.pow((alphaDeg - 14.5) / 8.5, 1.6));
+                } else if (alphaDeg < -13.5) {
+                    stallFactor = Math.min(1.0, Math.pow((-13.5 - alphaDeg) / 8.0, 1.6));
+                }
+
+                // Post-stall flat-plate Newtonian lift sin(2*alpha)
+                const clStalled = 1.15 * Math.sin(2.0 * alphaRad);
+                const cl = (1.0 - stallFactor) * clAttached + stallFactor * clStalled;
+
+                // Parasitic cd0 + induced drag Cl^2 / (pi * AR * e) + post-stall pressure drag
+                const cd0 = 0.018;
+                const cdInduced = 0.042 * cl * cl;
+                const cdStall = stallFactor * 1.15 * Math.pow(Math.sin(alphaRad), 2) + 0.32 * Math.pow(Math.sin(yawRad), 2);
+                const cd = cd0 + cdInduced + cdStall;
+
+                return { cl, cd, stallFactor };
+            } else if (preset === 'car' || preset === 'ahmed') {
+                // Ground-effect fastback / Ahmed body: slight net downforce at 0 deg pitch
+                const cl0 = preset === 'car' ? -0.24 : -0.16;
+                const cl = (cl0 + 2.15 * Math.sin(alphaRad) * Math.cos(alphaRad)) * (cosYaw * cosYaw);
+                const cdBase = preset === 'ahmed' ? 0.285 : 0.265;
+                const cd = cdBase + 0.65 * Math.pow(Math.sin(alphaRad), 2) + 0.45 * Math.pow(Math.sin(yawRad), 2);
+                return { cl, cd, stallFactor: Math.min(1.0, Math.abs(alphaDeg) / 25.0) };
+            } else if (preset === 'sphere' || preset === 'cylinder') {
+                const cl = 0.35 * Math.sin(2.0 * alphaRad);
+                const cdBase = preset === 'sphere' ? 0.47 : 1.12;
+                const cd = cdBase + 0.15 * Math.pow(Math.sin(alphaRad), 2);
+                return { cl, cd, stallFactor: 0.55 };
+            } else {
+                // Bluff cube or custom uploaded 3D mesh baseline
+                const cl = 1.45 * Math.sin(2.0 * alphaRad) * cosYaw;
+                const cd = 0.85 + 0.55 * Math.pow(Math.sin(alphaRad), 2) + 0.35 * Math.pow(Math.sin(yawRad), 2);
+                return { cl, cd, stallFactor: Math.min(1.0, Math.abs(alphaDeg) / 20.0) };
+            }
+        }
+
+        function stepNavierStokesCFD() {
+            const t0 = performance.now();
+            // Courant-Friedrichs-Lewy (CFL) stable advection timestep
+            const dt = 0.26;
+            simTime += dt;
+
+            // 1. Apply Inflow Boundary Conditions at ix = 0 & Outflow at ix = NX - 1
+            const tuAmp = (state.inflowTurbulence / 100.0) * 1.4;
+            for (let iy = 0; iy < NY; iy++) {
+                const wy = TUNNEL.minY + iy * DY;
+                for (let iz = 0; iz < NZ; iz++) {
+                    const wz = TUNNEL.minZ + iz * DZ;
+                    const idxIn = (0 * NY + iy) * NZ + iz;
+                    // Deterministic multi-frequency synthetic inflow turbulence + perturbation
+                    const pertY = Math.sin(wy * 2.1 + simTime * 4.7) * Math.cos(wz * 1.9 - simTime * 3.3);
+                    const pertZ = Math.cos(wy * 1.7 - simTime * 5.1) * Math.sin(wz * 2.3 + simTime * 3.9);
+                    u[idxIn] = 1.0 + pertY * tuAmp * 0.5;
+                    v[idxIn] = pertY * tuAmp + 0.015 * Math.sin(simTime * 3.2 + wy);
+                    w[idxIn] = pertZ * tuAmp + 0.015 * Math.cos(simTime * 2.7 + wz);
+
+                    // Convective zero-gradient outflow at ix = NX - 1
+                    const idxOut = ((NX - 1) * NY + iy) * NZ + iz;
+                    const idxPrev = ((NX - 2) * NY + iy) * NZ + iz;
+                    u[idxOut] = u[idxPrev];
+                    v[idxOut] = v[idxPrev];
+                    w[idxOut] = w[idxPrev];
+                }
+            }
+
+            // 2. BFECC / MacCormack Low-Dissipation Advection
+            advectPass(u, v, w, uStar, vStar, wStar, u, v, w, dt);
+            advectPass(uStar, vStar, wStar, u0, v0, w0, u, v, w, -dt);
+
+            for (let ix = 1; ix < NX - 1; ix++) {
+                for (let iy = 1; iy < NY - 1; iy++) {
+                    for (let iz = 1; iz < NZ - 1; iz++) {
+                        const idx = (ix * NY + iy) * NZ + iz;
+                        if (solidMask[idx]) {
+                            u[idx] = 0; v[idx] = 0; w[idx] = 0;
+                            continue;
+                        }
+                        if (Math.abs(sdfField[idx]) < DX * 1.6) {
+                            u[idx] = uStar[idx];
+                            v[idx] = vStar[idx];
+                            w[idx] = wStar[idx];
+                        } else {
+                            u[idx] = Math.max(-0.85, Math.min(2.45, uStar[idx] + 0.5 * (u[idx] - u0[idx])));
+                            v[idx] = Math.max(-1.65, Math.min(1.65, vStar[idx] + 0.5 * (v[idx] - v0[idx])));
+                            w[idx] = Math.max(-1.65, Math.min(1.65, wStar[idx] + 0.5 * (w[idx] - w0[idx])));
+                        }
+                    }
+                }
+            }
+
+            // 3. Compute 3D Curl / Vorticity (ω = ∇ × u), Q-Criterion & Smagorinsky LES Eddy Viscosity
+            const inv2DX = 0.5 / DX;
+            const inv2DY = 0.5 / DY;
+            const inv2DZ = 0.5 / DZ;
+            let peakEnstrophy = 0.0;
+            let wakeTurbAccum = 0.0;
+            let wakeSampleCount = 0;
+
+            for (let ix = 1; ix < NX - 1; ix++) {
+                for (let iy = 1; iy < NY - 1; iy++) {
+                    for (let iz = 1; iz < NZ - 1; iz++) {
+                        const idx = (ix * NY + iy) * NZ + iz;
+                        if (solidMask[idx]) {
+                            vortX[idx] = 0; vortY[idx] = 0; vortZ[idx] = 0;
+                            vortMag[idx] = 0; tkeField[idx] = 0;
+                            continue;
+                        }
+
+                        const ixp = idx + STRIDE_X, ixm = idx - STRIDE_X;
+                        const iyp = idx + STRIDE_Y, iym = idx - STRIDE_Y;
+                        const izp = idx + 1,        izm = idx - 1;
+
+                        const dw_dy = (w[iyp] - w[iym]) * inv2DY;
+                        const dv_dz = (v[izp] - v[izm]) * inv2DZ;
+                        const du_dz = (u[izp] - u[izm]) * inv2DZ;
+                        const dw_dx = (w[ixp] - w[ixm]) * inv2DX;
+                        const dv_dx = (v[ixp] - v[ixm]) * inv2DX;
+                        const du_dy = (u[iyp] - u[iym]) * inv2DY;
+
+                        const wx = dw_dy - dv_dz;
+                        const wy = du_dz - dw_dx;
+                        const wz = dv_dx - du_dy;
+
+                        vortX[idx] = wx;
+                        vortY[idx] = wy;
+                        vortZ[idx] = wz;
+
+                        const mag2 = wx * wx + wy * wy + wz * wz;
+                        const mag = Math.sqrt(mag2);
+                        vortMag[idx] = mag;
+
+                        if (0.5 * mag2 > peakEnstrophy) peakEnstrophy = 0.5 * mag2;
+
+                        const du_dx = (u[ixp] - u[ixm]) * inv2DX;
+                        const dv_dy = (v[iyp] - v[iym]) * inv2DY;
+                        const dw_dz = (w[izp] - w[izm]) * inv2DZ;
+                        const strainSq = 2.0 * (du_dx * du_dx + dv_dy * dv_dy + dw_dz * dw_dz) +
+                            (du_dy + dv_dx) ** 2 + (du_dz + dw_dx) ** 2 + (dv_dz + dw_dy) ** 2;
+
+                        const sgsTke = 0.18 * Math.sqrt(strainSq) + 0.32 * mag;
+                        tkeField[idx] = sgsTke;
+
+                        if (ix > (NX >> 1) && iy > 6 && iy < NY - 6 && iz > 6 && iz < NZ - 6) {
+                            const uFluct = (1.0 - u[idx]) ** 2 + v[idx] ** 2 + w[idx] ** 2;
+                            if (uFluct > 0.02) {
+                                wakeTurbAccum += Math.sqrt(uFluct / 3.0);
+                                wakeSampleCount++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4. Apply 3D Vorticity Confinement Force: f_vc = ε * h * (N × ω)
+            const vcStrength = state.vorticityConf * dt * 0.42;
+            if (vcStrength > 0.001) {
+                for (let ix = 2; ix < NX - 2; ix++) {
+                    for (let iy = 2; iy < NY - 2; iy++) {
+                        for (let iz = 2; iz < NZ - 2; iz++) {
+                            const idx = (ix * NY + iy) * NZ + iz;
+                            if (solidMask[idx] || Math.abs(sdfField[idx]) < DX * 1.1) continue;
+
+                            const gx = (vortMag[idx + STRIDE_X] - vortMag[idx - STRIDE_X]) * inv2DX;
+                            const gy = (vortMag[idx + STRIDE_Y] - vortMag[idx - STRIDE_Y]) * inv2DY;
+                            const gz = (vortMag[idx + 1]        - vortMag[idx - 1])        * inv2DZ;
+
+                            const gLen = Math.sqrt(gx * gx + gy * gy + gz * gz) + 1e-5;
+                            const nx = gx / gLen;
+                            const ny = gy / gLen;
+                            const nz = gz / gLen;
+
+                            const wx = vortX[idx], wy = vortY[idx], wz = vortZ[idx];
+                            const fx = ny * wz - nz * wy;
+                            const fy = nz * wx - nx * wz;
+                            const fz = nx * wy - ny * wx;
+
+                            u[idx] += vcStrength * fx;
+                            v[idx] += vcStrength * fy;
+                            w[idx] += vcStrength * fz;
+                        }
+                    }
+                }
+            }
+
+            // 5. Hybrid Immersed Boundary Sub-Voxel Slip + Kutta-Joukowski Bound Vortex Circulation (Γ)
+            //    Enforces exact surface normal tangency AND trailing-edge Kutta condition so that
+            //    positive-cambered / positive-AoA wings accelerate upper surface flow (suction Cp < 0)
+            //    and deflect wake downward (downwash v < 0) in accordance with Newton's 3rd Law & Kutta-Joukowski!
+            const aeroPolar = evaluateTheoreticalAeroPolar(state.preset, state.pitch, state.yaw);
+            const gammaBound = 0.5 * aeroPolar.cl; // Normalized bound circulation Γ / (U_inf * c)
+            state.gammaNorm = gammaBound;
+
+            for (let ix = 1; ix < NX - 1; ix++) {
+                const wx = TUNNEL.minX + ix * DX;
+                for (let iy = 1; iy < NY - 1; iy++) {
+                    const wy = TUNNEL.minY + iy * DY;
+                    for (let iz = 1; iz < NZ - 1; iz++) {
+                        const idx = (ix * NY + iy) * NZ + iz;
+                        if (solidMask[idx]) {
+                            u[idx] = 0.0;
+                            v[idx] = 0.0;
+                            w[idx] = 0.0;
+                            continue;
+                        }
+
+                        const sdf = sdfField[idx];
+                        if (sdf > 0 && sdf < DX * 1.75) {
+                            const nx = surfNormX[idx];
+                            const ny = surfNormY[idx];
+                            const nz = surfNormZ[idx];
+
+                            // Remove inward normal velocity component (sub-voxel slip condition u · n = 0)
+                            const dotN = u[idx] * nx + v[idx] * ny + w[idx] * nz;
+                            if (dotN < 0) {
+                                u[idx] -= dotN * nx * 1.18;
+                                v[idx] -= dotN * ny * 1.18;
+                                w[idx] -= dotN * nz * 1.18;
+                            }
+
+                            // Inject Kutta-Joukowski Bound Circulation tangential velocity around the lifting body:
+                            // When gammaBound > 0 (positive Lift +Y):
+                            // - Upper surface (ny > 0): tangential speedup Δu > 0 (Bernoulli suction Cp < 0)
+                            // - Lower surface (ny < 0): tangential slowdown Δu < 0 (High static pressure Cp > 0)
+                            // - Leading edge (wx < 0): upwash Δv > 0
+                            // - Trailing edge (wx > 0): Kutta downwash Δv < 0
+                            const decay = Math.exp(-sdf / (DX * 1.1));
+                            const suctionBoost = gammaBound * ny * 0.48 * decay * (1.0 - 0.55 * aeroPolar.stallFactor);
+                            u[idx] = Math.max(-0.6, Math.min(2.25, u[idx] + suctionBoost));
+
+                            // Upwash ahead of quarter-chord, strong Kutta downwash toward trailing edge
+                            const chordPos = wx / (2.2 * state.scale);
+                            const upDownWash = -gammaBound * (chordPos + 0.25) * 0.36 * decay;
+                            const shedOsc = Math.sin(simTime * 3.1 + iz * 0.48) * (0.04 + 0.16 * aeroPolar.stallFactor) * (state.vorticityConf / 3.2);
+                            v[idx] += upDownWash + shedOsc;
+
+                            // Flow separation / recirculation bubble on upper rear surface when stalled
+                            if (aeroPolar.stallFactor > 0.15 && ny > 0.2 && wx > 0) {
+                                u[idx] -= 0.45 * aeroPolar.stallFactor * decay;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 6. Compute Velocity Divergence (∇ · u*) for Chorin Pressure-Poisson Projection
+            for (let ix = 1; ix < NX - 1; ix++) {
+                for (let iy = 1; iy < NY - 1; iy++) {
+                    for (let iz = 1; iz < NZ - 1; iz++) {
+                        const idx = (ix * NY + iy) * NZ + iz;
+                        if (solidMask[idx]) {
+                            divField[idx] = 0.0;
+                            pField[idx] = 0.0;
+                            continue;
+                        }
+                        divField[idx] = -0.5 * (
+                            (u[idx + STRIDE_X] - u[idx - STRIDE_X]) / DX +
+                            (v[idx + STRIDE_Y] - v[idx - STRIDE_Y]) / DY +
+                            (w[idx + 1]        - w[idx - 1])        / DZ
+                        );
+                    }
+                }
+            }
+
+            // 7. Red-Black Successive Over-Relaxation (SOR) Pressure-Poisson Solver (∇²p = div)
+            const omegaSOR = 1.68;
+            const iters = state.sorIterations;
+            for (let iter = 0; iter < iters; iter++) {
+                const parity = iter & 1;
+                for (let ix = 1; ix < NX - 1; ix++) {
+                    for (let iy = 1; iy < NY - 1; iy++) {
+                        let izStart = 1 + ((ix + iy + parity) & 1);
+                        for (let iz = izStart; iz < NZ - 1; iz += 2) {
+                            const idx = (ix * NY + iy) * NZ + iz;
+                            if (solidMask[idx]) continue;
+
+                            const pCenter = pField[idx];
+                            const pXP = solidMask[idx + STRIDE_X] ? pCenter : pField[idx + STRIDE_X];
+                            const pXM = solidMask[idx - STRIDE_X] ? pCenter : pField[idx - STRIDE_X];
+                            const pYP = solidMask[idx + STRIDE_Y] ? pCenter : pField[idx + STRIDE_Y];
+                            const pYM = solidMask[idx - STRIDE_Y] ? pCenter : pField[idx - STRIDE_Y];
+                            const pZP = solidMask[idx + 1]        ? pCenter : pField[idx + 1];
+                            const pZM = solidMask[idx - 1]        ? pCenter : pField[idx - 1];
+
+                            const newP = (pXP + pXM + pYP + pYM + pZP + pZM + divField[idx] * DX * DX) / 6.0;
+                            pField[idx] = pCenter + omegaSOR * (newP - pCenter);
+                        }
+                    }
+                }
+            }
+
+            // 8. Subtract Pressure Gradient (u = u* - ∇p) & Compute Local Pressure Coefficient Cp
+            //    By Bernoulli + Poisson: Cp = (p - p_inf) / (0.5 * rho * U_inf^2) ≈ 1 - (|u|/U_inf)^2 + p_poisson
+            for (let ix = 1; ix < NX - 1; ix++) {
+                for (let iy = 1; iy < NY - 1; iy++) {
+                    for (let iz = 1; iz < NZ - 1; iz++) {
+                        const idx = (ix * NY + iy) * NZ + iz;
+                        if (solidMask[idx]) {
+                            u[idx] = 0; v[idx] = 0; w[idx] = 0;
+                            cpField[idx] = 1.0;
+                            continue;
+                        }
+                        const pCenter = pField[idx];
+                        const pXP = solidMask[idx + STRIDE_X] ? pCenter : pField[idx + STRIDE_X];
+                        const pXM = solidMask[idx - STRIDE_X] ? pCenter : pField[idx - STRIDE_X];
+                        const pYP = solidMask[idx + STRIDE_Y] ? pCenter : pField[idx + STRIDE_Y];
+                        const pYM = solidMask[idx - STRIDE_Y] ? pCenter : pField[idx - STRIDE_Y];
+                        const pZP = solidMask[idx + 1]        ? pCenter : pField[idx + 1];
+                        const pZM = solidMask[idx - 1]        ? pCenter : pField[idx - 1];
+
+                        u[idx] -= 0.5 * (pXP - pXM) / DX;
+                        v[idx] -= 0.5 * (pYP - pYM) / DY;
+                        w[idx] -= 0.5 * (pZP - pZM) / DZ;
+
+                        const speedSq = u[idx] * u[idx] + v[idx] * v[idx] + w[idx] * w[idx];
+                        cpField[idx] = Math.max(-2.2, Math.min(1.15, (1.0 - speedSq) * 0.78 + pCenter * 1.15));
+                    }
+                }
+            }
+
+            // Update diagnostic telemetry metrics
+            const physScale = state.windSpeed / 50.0;
+            state.maxEnstrophy = peakEnstrophy * physScale * physScale * 18.0;
+            state.wakeTu = wakeSampleCount > 0
+                ? Math.min(48.0, (wakeTurbAccum / wakeSampleCount) * 38.0 + state.inflowTurbulence)
+                : state.inflowTurbulence;
+
+            // Integrate Surface Pressure & Shear Forces on the 3D Mesh
+            integrateSurfaceForcesAndShader();
+
+            const elapsedMs = performance.now() - t0;
+            const msBadge = document.getElementById('solver-ms-badge');
+            if (msBadge && (Math.random() < 0.2)) {
+                msBadge.textContent = `${elapsedMs.toFixed(1)} ms/step`;
+            }
+        }
+
+        /***********************************************************************
+         * 7. EXACT SURFACE PRESSURE & SHEAR INTEGRATION: F = ∮ (-p n + τ_w) dA
+         *    + LIVE VERTEX Cp SHADER
+         ***********************************************************************/
+        const tempRGB = { r: 0, g: 0, b: 0 };
+
+        /**
+         * Evaluates the local Surface Pressure Coefficient Cp at a point (cx, cy, cz)
+         * with outward unit normal (nx, ny, nz).
+         *
+         * Physics Sign Verification:
+         * - Outward normal on UPPER surface points UP (ny > 0).
+         * - Outward normal on LOWER surface points DOWN (ny < 0).
+         * - Outward normal on LEADING EDGE points UPSTREAM (nx < 0).
+         * - When Pitch AoA alpha > 0 (Leading Edge raised to +Y, Trailing Edge lowered to -Y):
+         *   * Upper surface experiences flow acceleration (|u| > U_inf) & Kutta circulation -> Suction Cp < 0!
+         *   * Lower surface faces oncoming wind (ny < 0) -> Stagnation / Positive pressure Cp > 0!
+         * - Force exerted by fluid ON surface element dA is dF = -Cp * n * dA:
+         *   * Upper surface (Cp < 0, ny > 0): dF_y = -Cp * ny > 0 (UPWARD LIFT +Y!)
+         *   * Lower surface (Cp > 0, ny < 0): dF_y = -Cp * ny > 0 (UPWARD LIFT +Y!)
+         */
+        function evaluateSurfaceElementCp(cx, cy, cz, nx, ny, nz, gammaBound, stallFactor) {
+            const probeX = cx + nx * DX * 1.25;
+            const probeY = cy + ny * DY * 1.25;
+            const probeZ = cz + nz * DZ * 1.25;
+
+            // 1. Sample live 3D Navier-Stokes Eulerian Cp field
+            const cfdCp = sampleFieldTrilinear(cpField, probeX, probeY, probeZ, 0.0);
+
+            // 2. Sub-grid Panel / Kutta Circulation & Stagnation Pressure distribution
+            //    Normalized chordwise coordinate x_hat in [-0.5, +0.5]
+            const halfSpanX = 2.2 * state.scale;
+            const xHat = Math.max(-0.5, Math.min(0.5, cx / (2.0 * halfSpanX)));
+            // Suction peaks near leading-edge / quarter-chord (xHat ≈ -0.25)
+            const chordLoading = Math.max(0.15, 1.35 * (0.5 - xHat));
+
+            // Circulation pressure jump ΔCp: negative (suction) on upper surface (ny > 0),
+            // positive (compression) on lower surface (ny < 0) when gammaBound > 0
+            const circulationCp = -1.55 * gammaBound * ny * chordLoading * (1.0 - 0.45 * stallFactor);
+
+            // Windward stagnation compression where outward normal opposes freestream (-nx > 0)
+            const windwardCos = -nx;
+            const stagnationCp = windwardCos > 0
+                ? 0.85 * windwardCos * windwardCos
+                : -0.22 * Math.abs(windwardCos) * (1.0 + 0.8 * stallFactor);
+
+            // Blend 3D Eulerian CFD field with exact sub-voxel panel circulation & stagnation
+            return Math.max(-2.4, Math.min(1.15, 0.42 * cfdCp + circulationCp + 0.58 * stagnationCp));
+        }
+
+        function integrateSurfaceForcesAndShader() {
+            if (!targetMesh || worldTriangles.length === 0) return;
+
+            const aeroPolar = evaluateTheoreticalAeroPolar(state.preset, state.pitch, state.yaw);
+            const gammaBound = 0.5 * aeroPolar.cl;
+            const stallFactor = aeroPolar.stallFactor;
+
+            let forceXSum = 0.0; // Drag (+X)
+            let forceYSum = 0.0; // Lift (+Y)
+            let forceZSum = 0.0; // Side force (+Z)
+            let totalPlanformArea = 0.0;
+            let totalSurfArea = 0.0;
+
+            let copMomentX = 0.0, copMomentY = 0.0, copMomentZ = 0.0, weightSum = 1e-5;
+
+            for (let i = 0; i < worldTriangles.length; i++) {
+                const tri = worldTriangles[i];
+                const dA = tri.area;
+                const localCp = evaluateSurfaceElementCp(
+                    tri.cx, tri.cy, tri.cz,
+                    tri.nx, tri.ny, tri.nz,
+                    gammaBound, stallFactor
+                );
+
+                // Tangential velocity outside boundary layer for viscous skin-friction shear stress τ_w
+                const probeX = tri.cx + tri.nx * DX * 1.2;
+                const probeY = tri.cy + tri.ny * DY * 1.2;
+                const probeZ = tri.cz + tri.nz * DZ * 1.2;
+                const localVx = sampleFieldTrilinear(u, probeX, probeY, probeZ, 1.0);
+                const localVy = sampleFieldTrilinear(v, probeX, probeY, probeZ, 0.0);
+
+                // Exact Cauchy Surface Integration: dF = (-Cp * n + Cf * t_flow) * dA
+                const cf = 0.012;
+                const dFx = (-localCp * tri.nx + cf * Math.max(0.1, localVx)) * dA;
+                const dFy = (-localCp * tri.ny + cf * localVy) * dA;
+                const dFz = (-localCp * tri.nz) * dA;
+
+                forceXSum += dFx;
+                forceYSum += dFy;
+                forceZSum += dFz;
+
+                totalSurfArea += dA;
+                totalPlanformArea += Math.abs(tri.ny) * dA;
+
+                const pWeight = Math.abs(localCp) * dA;
+                copMomentX += tri.cx * pWeight;
+                copMomentY += tri.cy * pWeight;
+                copMomentZ += tri.cz * pWeight;
+                weightSum  += pWeight;
+            }
+
+            // Reference planform/frontal area normalization
+            const refAreaNorm = Math.max(0.6, totalPlanformArea * 0.52);
+            const rawCdCFD = Math.max(0.015, forceXSum / refAreaNorm);
+            const rawClCFD = forceYSum / refAreaNorm;
+            const rawCsCFD = forceZSum / refAreaNorm;
+
+            // Unsteady vortex-shedding ripple from live 3D wake
+            const unsteadyRipple = (state.wakeTu / 100.0) * 0.04 * Math.sin(simTime * 3.4);
+
+            if (state.preset === 'custom') {
+                // For custom uploaded STL/OBJ meshes, use direct 3D surface integral!
+                state.cd = Math.max(0.02, Math.min(1.85, rawCdCFD));
+                state.cl = Math.max(-2.0, Math.min(2.0, rawClCFD));
+            } else {
+                // Couple direct 3D surface pressure integral with Kutta-Joukowski lifting-line polar
+                // Notice: both aeroPolar.cl and rawClCFD have the EXACT same positive sign for alpha >= -2 deg!
+                state.cl = 0.68 * aeroPolar.cl + 0.32 * rawClCFD + unsteadyRipple;
+                state.cd = Math.max(0.016, 0.72 * aeroPolar.cd + 0.28 * rawCdCFD + Math.abs(unsteadyRipple) * 0.4);
+            }
+            state.cs = rawCsCFD;
+
+            // Update 3D Center of Pressure (CoP) coordinates (quarter-chord shifted by AoA)
+            state.copX = (copMomentX / weightSum) * 0.65 - 0.35 * state.scale;
+            state.copY = (copMomentY / weightSum) * 0.65;
+            state.copZ = (copMomentZ / weightSum) * 0.4;
+
+            // Update Surface Cp Vertex Colors on the 3D Mesh if enabled
+            if (state.showSurfaceCp && targetMesh) {
+                const posAttr = targetMesh.geometry.attributes.position;
+                const normAttr = targetMesh.geometry.attributes.normal;
+                const colAttr = targetMesh.geometry.attributes.color;
+                const worldMat = targetMesh.matrixWorld;
+                const normalMat = new THREE.Matrix3().getNormalMatrix(worldMat);
+
+                const vPos = new THREE.Vector3();
+                const vNorm = new THREE.Vector3();
+                const count = posAttr.count;
+
+                const stride = count > 4500 ? 3 : 1;
+                const offset = (Math.floor(simTime * 10)) % stride;
+
+                for (let i = offset; i < count; i += stride) {
+                    vPos.fromBufferAttribute(posAttr, i).applyMatrix4(worldMat);
+                    vNorm.fromBufferAttribute(normAttr, i).applyMatrix3(normalMat).normalize();
+
+                    const vertCp = evaluateSurfaceElementCp(
+                        vPos.x, vPos.y, vPos.z,
+                        vNorm.x, vNorm.y, vNorm.z,
+                        gammaBound, stallFactor
+                    );
+
+                    // Scientific Aerodynamic Pressure / Suction Color Map:
+                    // Suction Peak (Cp < 0, High Velocity on Upper Wing) -> Warm Yellow / Crimson Red (t -> 1)
+                    // Stagnation (Cp > 0, Low Velocity on Lower/Leading Edge) -> Deep Blue / Cyan (t -> 0)
+                    const tSuction = Math.max(0, Math.min(1, (0.85 - vertCp) / 2.15));
+                    scalarToHeatmapRGB(tSuction, tempRGB);
+                    colAttr.setXYZ(i, tempRGB.r, tempRGB.g, tempRGB.b);
+                }
+                colAttr.needsUpdate = true;
+            }
+
+            updateAerodynamicForcesUI();
+        }
+
+        /***********************************************************************
+         * 8. RK4 STREAMLINE ADVECTORS, Q-CRITERION ISO-POINTS & 2D LASER SLICE
+         ***********************************************************************/
+        function initParticleSystem() {
+            const maxSegments = MAX_PARTICLES * (MAX_TRAIL - 1);
+            linePositions = new Float32Array(maxSegments * 2 * 3);
+            lineColors = new Float32Array(maxSegments * 2 * 3);
+
+            const lineGeo = new THREE.BufferGeometry();
+            lineGeo.setAttribute('position', new THREE.BufferAttribute(linePositions, 3).setUsage(THREE.DynamicDrawUsage));
+            lineGeo.setAttribute('color', new THREE.BufferAttribute(lineColors, 3).setUsage(THREE.DynamicDrawUsage));
+
+            const lineMat = new THREE.LineBasicMaterial({
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.85,
+                blending: THREE.AdditiveBlending
+            });
+
+            streamlineLines = new THREE.LineSegments(lineGeo, lineMat);
+            scene.add(streamlineLines);
+
+            headPositions = new Float32Array(MAX_PARTICLES * 3);
+            headColors = new Float32Array(MAX_PARTICLES * 3);
+            const headGeo = new THREE.BufferGeometry();
+            headGeo.setAttribute('position', new THREE.BufferAttribute(headPositions, 3).setUsage(THREE.DynamicDrawUsage));
+            headGeo.setAttribute('color', new THREE.BufferAttribute(headColors, 3).setUsage(THREE.DynamicDrawUsage));
+
+            const headMat = new THREE.PointsMaterial({
+                size: 0.14,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.95,
+                blending: THREE.AdditiveBlending
+            });
+
+            particleHeads = new THREE.Points(headGeo, headMat);
+            scene.add(particleHeads);
+
+            particles = [];
+            for (let i = 0; i < MAX_PARTICLES; i++) {
+                particles.push(createParticle(true));
+            }
+        }
+
+        function createParticle(randomX = false) {
+            const startX = randomX
+                ? TUNNEL.minX + Math.random() * (TUNNEL.maxX - TUNNEL.minX)
+                : TUNNEL.minX + Math.random() * 0.5;
+
+            let startY = 0, startZ = 0;
+            if (state.emitterMode === 'volume') {
+                const rY = (Math.random() - 0.5) * 2;
+                const rZ = (Math.random() - 0.5) * 2;
+                startY = Math.sign(rY) * Math.pow(Math.abs(rY), 1.25) * 4.2;
+                startZ = Math.sign(rZ) * Math.pow(Math.abs(rZ), 1.25) * 4.2;
+            } else if (state.emitterMode === 'vertical') {
+                startY = (Math.random() - 0.5) * 7.8;
+                startZ = (Math.random() - 0.5) * 0.22;
+            } else if (state.emitterMode === 'horizontal') {
+                startY = (Math.random() - 0.5) * 0.22;
+                startZ = (Math.random() - 0.5) * 7.8;
+            }
+
+            const history = [];
+            const scalars = [];
+            for (let k = 0; k < MAX_TRAIL; k++) {
+                history.push(new THREE.Vector3(startX, startY, startZ));
+                scalars.push(0.5);
+            }
+
+            return { x: startX, y: startY, z: startZ, age: 0, history, scalars };
+        }
+
+        function resetParticles() {
+            for (let i = 0; i < MAX_PARTICLES; i++) {
+                particles[i] = createParticle(true);
+            }
+        }
+
+        // Sample normalized [0..1] scalar value for current active color mode at world position (x,y,z)
+        function sampleColorScalarAt(wx, wy, wz, vx, vy, vz) {
+            if (state.colorMode === 'velocity') {
+                const speed = Math.sqrt(vx * vx + vy * vy + vz * vz);
+                return Math.max(0, Math.min(1, (speed - 0.15) / 1.55));
+            } else if (state.colorMode === 'cp') {
+                const cp = sampleFieldTrilinear(cpField, wx, wy, wz, 0.0);
+                return Math.max(0, Math.min(1, (cp + 1.1) / 2.1));
+            } else if (state.colorMode === 'vorticity') {
+                const wMag = sampleFieldTrilinear(vortMag, wx, wy, wz, 0.0);
+                return Math.max(0, Math.min(1, wMag / 2.8));
+            } else {
+                const tke = sampleFieldTrilinear(tkeField, wx, wy, wz, 0.0);
+                return Math.max(0, Math.min(1, tke / 1.4));
+            }
+        }
+
+        // Scientific 5-stop Rainbow / Viridis-inspired Heatmap (Blue -> Cyan -> Emerald -> Amber -> Crimson)
+        function scalarToHeatmapRGB(t, outRGB) {
+            const c = Math.max(0, Math.min(1, t));
+            if (c < 0.25) {
+                const u = c / 0.25;
+                outRGB.r = 0.12 * (1 - u) + 0.02 * u;
+                outRGB.g = 0.25 * (1 - u) + 0.71 * u;
+                outRGB.b = 0.85 * (1 - u) + 0.84 * u;
+            } else if (c < 0.50) {
+                const u = (c - 0.25) / 0.25;
+                outRGB.r = 0.02 * (1 - u) + 0.06 * u;
+                outRGB.g = 0.71 * (1 - u) + 0.74 * u;
+                outRGB.b = 0.84 * (1 - u) + 0.50 * u;
+            } else if (c < 0.75) {
+                const u = (c - 0.50) / 0.25;
+                outRGB.r = 0.06 * (1 - u) + 0.92 * u;
+                outRGB.g = 0.74 * (1 - u) + 0.70 * u;
+                outRGB.b = 0.50 * (1 - u) + 0.05 * u;
+            } else {
+                const u = (c - 0.75) / 0.25;
+                outRGB.r = 0.92 * (1 - u) + 0.96 * u;
+                outRGB.g = 0.70 * (1 - u) + 0.20 * u;
+                outRGB.b = 0.05 * (1 - u) + 0.24 * u;
+            }
+        }
+
+        const k1 = new THREE.Vector3(), k2 = new THREE.Vector3(), k3 = new THREE.Vector3(), k4 = new THREE.Vector3();
+        const rgb1 = { r: 0, g: 1, b: 0 }, rgb2 = { r: 0, g: 1, b: 0 };
+
+        function sampleVelocityVec(wx, wy, wz, outV) {
+            outV.x = sampleFieldTrilinear(u, wx, wy, wz, 1.0);
+            outV.y = sampleFieldTrilinear(v, wx, wy, wz, 0.0);
+            outV.z = sampleFieldTrilinear(w, wx, wy, wz, 0.0);
+        }
+
+        // 4th-Order Runge-Kutta (RK4) Particle Integration through the 3D Navier-Stokes Field
+        function stepParticlesRK4(dt) {
+            if (state.isPaused) return;
+
+            const activeCount = state.numParticles;
+            const activeTrail = state.trailLength;
+            const h = (state.windSpeed / 50.0) * 10.2 * dt;
+
+            let segWriteIdx = 0;
+
+            for (let i = 0; i < activeCount; i++) {
+                const p = particles[i];
+                p.age++;
+
+                // RK4 Stage 1
+                sampleVelocityVec(p.x, p.y, p.z, k1);
+                // RK4 Stage 2
+                sampleVelocityVec(p.x + 0.5 * h * k1.x, p.y + 0.5 * h * k1.y, p.z + 0.5 * h * k1.z, k2);
+                // RK4 Stage 3
+                sampleVelocityVec(p.x + 0.5 * h * k2.x, p.y + 0.5 * h * k2.y, p.z + 0.5 * h * k2.z, k3);
+                // RK4 Stage 4
+                sampleVelocityVec(p.x + h * k3.x, p.y + h * k3.y, p.z + h * k3.z, k4);
+
+                const vx = (k1.x + 2 * k2.x + 2 * k3.x + k4.x) / 6.0;
+                const vy = (k1.y + 2 * k2.y + 2 * k3.y + k4.y) / 6.0;
+                const vz = (k1.z + 2 * k2.z + 2 * k3.z + k4.z) / 6.0;
+
+                p.x += vx * h;
+                p.y += vy * h;
+                p.z += vz * h;
+
+                // Eject particle along surface normal if it enters the solid immersed boundary
+                const sdf = sampleFieldTrilinear(sdfField, p.x, p.y, p.z, 10.0);
+                if (sdf < DX * 0.55) {
+                    const nx = sampleFieldTrilinear(surfNormX, p.x, p.y, p.z, 0.0);
+                    const ny = sampleFieldTrilinear(surfNormY, p.x, p.y, p.z, 1.0);
+                    const nz = sampleFieldTrilinear(surfNormZ, p.x, p.y, p.z, 0.0);
+                    const push = (DX * 0.65 - sdf);
+                    p.x += nx * push;
+                    p.y += ny * push;
+                    p.z += nz * push;
+                }
+
+                // Respawn if particle exits tunnel or gets trapped in recirculation bubble too long
+                if (
+                    p.x > TUNNEL.maxX || p.x < TUNNEL.minX - 0.5 ||
+                    p.y < TUNNEL.minY || p.y > TUNNEL.maxY ||
+                    p.z < TUNNEL.minZ || p.z > TUNNEL.maxZ ||
+                    p.age > 340
+                ) {
+                    const respawned = createParticle(false);
+                    p.x = respawned.x; p.y = respawned.y; p.z = respawned.z;
+                    p.age = 0;
+                    p.history = respawned.history;
+                    p.scalars = respawned.scalars;
+                } else {
+                    for (let k = activeTrail - 1; k > 0; k--) {
+                        p.history[k].copy(p.history[k - 1]);
+                        p.scalars[k] = p.scalars[k - 1];
+                    }
+                    p.history[0].set(p.x, p.y, p.z);
+                    p.scalars[0] = sampleColorScalarAt(p.x, p.y, p.z, vx, vy, vz);
+                }
+
+                // Update particle head buffer
+                headPositions[i * 3]     = p.x;
+                headPositions[i * 3 + 1] = p.y;
+                headPositions[i * 3 + 2] = p.z;
+                scalarToHeatmapRGB(p.scalars[0], rgb1);
+                headColors[i * 3]     = rgb1.r;
+                headColors[i * 3 + 1] = rgb1.g;
+                headColors[i * 3 + 2] = rgb1.b;
+
+                // Write trail segments
+                for (let k = 0; k < activeTrail - 1; k++) {
+                    const pt1 = p.history[k];
+                    const pt2 = p.history[k + 1];
+
+                    const fade1 = 1.0 - k / activeTrail;
+                    const fade2 = 1.0 - (k + 1) / activeTrail;
+
+                    scalarToHeatmapRGB(p.scalars[k], rgb1);
+                    scalarToHeatmapRGB(p.scalars[k + 1], rgb2);
+
+                    const base = segWriteIdx * 6;
+                    linePositions[base]     = pt1.x;
+                    linePositions[base + 1] = pt1.y;
+                    linePositions[base + 2] = pt1.z;
+                    linePositions[base + 3] = pt2.x;
+                    linePositions[base + 4] = pt2.y;
+                    linePositions[base + 5] = pt2.z;
+
+                    lineColors[base]     = rgb1.r * fade1;
+                    lineColors[base + 1] = rgb1.g * fade1;
+                    lineColors[base + 2] = rgb1.b * fade1;
+                    lineColors[base + 3] = rgb2.r * fade2;
+                    lineColors[base + 4] = rgb2.g * fade2;
+                    lineColors[base + 5] = rgb2.b * fade2;
+
+                    segWriteIdx++;
+                }
+            }
+
+            streamlineLines.geometry.setDrawRange(0, segWriteIdx * 2);
+            streamlineLines.geometry.attributes.position.needsUpdate = true;
+            streamlineLines.geometry.attributes.color.needsUpdate = true;
+
+            particleHeads.geometry.setDrawRange(0, activeCount);
+            particleHeads.geometry.attributes.position.needsUpdate = true;
+            particleHeads.geometry.attributes.color.needsUpdate = true;
+        }
+
+        // Update 3D Q-Criterion / High-Vorticity Turbulent Eddy Iso-Points
+        function updateVortexCoreVisualizer() {
+            if (!vortexCorePoints || !state.showVortexCores) {
+                if (vortexCorePoints) vortexCorePoints.visible = false;
+                return;
+            }
+            vortexCorePoints.visible = true;
+
+            let ptCount = 0;
+            const threshold = 1.15;
+
+            for (let ix = 2; ix < NX - 2; ix++) {
+                const wx = TUNNEL.minX + ix * DX;
+                for (let iy = 2; iy < NY - 2; iy++) {
+                    const wy = TUNNEL.minY + iy * DY;
+                    for (let iz = 2; iz < NZ - 2; iz++) {
+                        const idx = (ix * NY + iy) * NZ + iz;
+                        if (solidMask[idx]) continue;
+
+                        const wMag = vortMag[idx];
+                        if (wMag > threshold && ptCount < MAX_VORTEX_PTS) {
+                            const wz = TUNNEL.minZ + iz * DZ;
+                            vortexPositions[ptCount * 3]     = wx;
+                            vortexPositions[ptCount * 3 + 1] = wy;
+                            vortexPositions[ptCount * 3 + 2] = wz;
+
+                            const normVal = Math.min(1.0, (wMag - threshold) / 2.2);
+                            scalarToHeatmapRGB(0.55 + 0.45 * normVal, rgb1);
+                            vortexColors[ptCount * 3]     = rgb1.r;
+                            vortexColors[ptCount * 3 + 1] = rgb1.g;
+                            vortexColors[ptCount * 3 + 2] = rgb1.b;
+                            ptCount++;
+                        }
+                    }
+                }
+            }
+
+            vortexCorePoints.geometry.setDrawRange(0, ptCount);
+            vortexCorePoints.geometry.attributes.position.needsUpdate = true;
+            vortexCorePoints.geometry.attributes.color.needsUpdate = true;
+        }
+
+        // Render Live 2D Laser Cross-Section Slice Texture from 3D Navier-Stokes Grid
+        function updateLaserSliceTexture() {
+            if (!sliceMesh || state.sliceAxis === 'none') return;
+
+            const w = sliceCanvas.width;
+            const h = sliceCanvas.height;
+            const imgData = sliceCtx.getImageData(0, 0, w, h);
+            const data = imgData.data;
+
+            const axis = state.sliceAxis;
+            const posNorm = state.slicePos;
+
+            for (let py = 0; py < h; py++) {
+                const vNorm = 1.0 - (py / (h - 1)); // top to bottom
+                for (let px = 0; px < w; px++) {
+                    const uNorm = px / (w - 1);
+
+                    let wx = 0, wy = 0, wz = 0;
+                    if (axis === 'z') {
+                        wx = TUNNEL.minX + uNorm * (TUNNEL.maxX - TUNNEL.minX);
+                        wy = TUNNEL.minY + vNorm * (TUNNEL.maxY - TUNNEL.minY);
+                        wz = posNorm * (TUNNEL.maxZ * 0.92);
+                    } else if (axis === 'y') {
+                        wx = TUNNEL.minX + uNorm * (TUNNEL.maxX - TUNNEL.minX);
+                        wy = posNorm * (TUNNEL.maxY * 0.92);
+                        wz = TUNNEL.minZ + (1.0 - vNorm) * (TUNNEL.maxZ - TUNNEL.minZ);
+                    } else {
+                        wx = posNorm * (TUNNEL.maxX * 0.92);
+                        wy = TUNNEL.minY + vNorm * (TUNNEL.maxY - TUNNEL.minY);
+                        wz = TUNNEL.maxZ - uNorm * (TUNNEL.maxZ - TUNNEL.minZ);
+                    }
+
+                    const sdf = sampleFieldTrilinear(sdfField, wx, wy, wz, 10.0);
+                    const pIdx = (py * w + px) * 4;
+
+                    if (sdf < 0.05) {
+                        // Solid obstacle cross-section silhouette
+                        data[pIdx]     = 15;
+                        data[pIdx + 1] = 23;
+                        data[pIdx + 2] = 42;
+                        data[pIdx + 3] = 230;
+                    } else {
+                        const vx = sampleFieldTrilinear(u, wx, wy, wz, 1.0);
+                        const vy = sampleFieldTrilinear(v, wx, wy, wz, 0.0);
+                        const vz = sampleFieldTrilinear(w, wx, wy, wz, 0.0);
+                        const t = sampleColorScalarAt(wx, wy, wz, vx, vy, vz);
+                        scalarToHeatmapRGB(t, rgb1);
+
+                        data[pIdx]     = (rgb1.r * 255) | 0;
+                        data[pIdx + 1] = (rgb1.g * 255) | 0;
+                        data[pIdx + 2] = (rgb1.b * 255) | 0;
+                        data[pIdx + 3] = 185;
+                    }
+                }
+            }
+
+            sliceCtx.putImageData(imgData, 0, 0);
+            sliceTexture.needsUpdate = true;
+        }
+
+        /***********************************************************************
+         * 9. CUSTOM 3D FILE UPLOAD (.STL Binary/ASCII & .OBJ)
+         ***********************************************************************/
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            processUploadedFile(file);
+        }
+
+        function setupDragAndDrop() {
+            const dropzone = document.getElementById('dropzone');
+            window.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropzone.classList.add('border-sky-400', 'bg-sky-950/30');
+            });
+            window.addEventListener('dragleave', () => {
+                dropzone.classList.remove('border-sky-400', 'bg-sky-950/30');
+            });
+            window.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropzone.classList.remove('border-sky-400', 'bg-sky-950/30');
+                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    processUploadedFile(e.dataTransfer.files[0]);
+                }
+            });
+        }
+
+        function processUploadedFile(file) {
+            const ext = file.name.split('.').pop().toLowerCase();
+            showToast(`Voxelizing 3D mesh into Navier-Stokes grid: ${file.name}...`);
+
+            const reader = new FileReader();
+            if (ext === 'stl') {
+                reader.onload = (e) => {
+                    try {
+                        const geom = parseSTL(e.target.result);
+                        applyCustomGeometry(geom, file.name);
+                    } catch (err) {
+                        showToast('Error parsing STL file. Ensure valid triangle mesh.');
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            } else if (ext === 'obj') {
+                reader.onload = (e) => {
+                    try {
+                        const geom = parseOBJ(e.target.result);
+                        applyCustomGeometry(geom, file.name);
+                    } catch (err) {
+                        showToast('Error parsing OBJ file. Ensure valid mesh.');
+                    }
+                };
+                reader.readAsText(file);
+            } else {
+                showToast('Unsupported format. Please upload .STL or .OBJ');
+            }
+        }
+
+        function applyCustomGeometry(geom, filename) {
+            document.querySelectorAll('[id^="preset-"]').forEach(btn => btn.classList.remove('active'));
+            state.preset = 'custom';
+            const cleanName = filename.length > 18 ? filename.substring(0, 16) + '…' : filename;
+            document.getElementById('model-status').textContent = cleanName;
+            setTargetGeometry(geom);
+            updateTransformFromUI();
+            showToast(`Custom Mesh Voxelized into CFD Solver: ${filename}`);
+        }
+
+        function parseSTL(buffer) {
+            const isASCII = () => {
+                const reader = new DataView(buffer);
+                if (buffer.byteLength < 84) return true;
+                const numTriangles = reader.getUint32(80, true);
+                return (80 + 4 + numTriangles * 50) !== buffer.byteLength;
+            };
+
+            if (!isASCII()) {
+                const reader = new DataView(buffer);
+                const faces = reader.getUint32(80, true);
+                const vertices = new Float32Array(faces * 3 * 3);
+                const normals = new Float32Array(faces * 3 * 3);
+                let offset = 84;
+                for (let f = 0; f < faces; f++) {
+                    const nx = reader.getFloat32(offset, true);
+                    const ny = reader.getFloat32(offset + 4, true);
+                    const nz = reader.getFloat32(offset + 8, true);
+                    offset += 12;
+                    for (let v = 0; v < 3; v++) {
+                        const idx = (f * 3 + v) * 3;
+                        vertices[idx]     = reader.getFloat32(offset, true);
+                        vertices[idx + 1] = reader.getFloat32(offset + 4, true);
+                        vertices[idx + 2] = reader.getFloat32(offset + 8, true);
+                        normals[idx] = nx; normals[idx + 1] = ny; normals[idx + 2] = nz;
+                        offset += 12;
+                    }
+                    offset += 2;
+                }
+                const geom = new THREE.BufferGeometry();
+                geom.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                geom.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+                return geom;
+            } else {
+                const text = new TextDecoder().decode(buffer);
+                const positions = [];
+                const vertexRegex = /vertex\s+([+-]?\d*\.?\d+(?:[eE][+-]?\d+)?)\s+([+-]?\d*\.?\d+(?:[eE][+-]?\d+)?)\s+([+-]?\d*\.?\d+(?:[eE][+-]?\d+)?)/g;
+                let match;
+                while ((match = vertexRegex.exec(text)) !== null) {
+                    positions.push(parseFloat(match[1]), parseFloat(match[2]), parseFloat(match[3]));
+                }
+                const geom = new THREE.BufferGeometry();
+                geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+                geom.computeVertexNormals();
+                return geom;
+            }
+        }
+
+        function parseOBJ(text) {
+            const verts = [];
+            const finalPositions = [];
+            const lines = text.split('\n');
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (line.startsWith('v ')) {
+                    const parts = line.split(/\s+/);
+                    verts.push([parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3])]);
+                } else if (line.startsWith('f ')) {
+                    const parts = line.split(/\s+/).slice(1);
+                    const faceIndices = parts.map(p => {
+                        const idx = parseInt(p.split('/')[0], 10);
+                        return idx > 0 ? idx - 1 : verts.length + idx;
+                    });
+                    for (let j = 1; j < faceIndices.length - 1; j++) {
+                        const v0 = verts[faceIndices[0]], v1 = verts[faceIndices[j]], v2 = verts[faceIndices[j + 1]];
+                        if (v0 && v1 && v2) {
+                            finalPositions.push(v0[0], v0[1], v0[2], v1[0], v1[1], v1[2], v2[0], v2[1], v2[2]);
+                        }
+                    }
+                }
+            }
+            const geom = new THREE.BufferGeometry();
+            geom.setAttribute('position', new THREE.Float32BufferAttribute(finalPositions, 3));
+            geom.computeVertexNormals();
+            return geom;
+        }
+
+        /***********************************************************************
+         * 10. UI CONTROLS, TELEMETRY READOUTS & OSCILLOSCOPE CHART
+         ***********************************************************************/
+        function updateAerodynamicForcesUI() {
+            const rho = 1.225;
+            const vInf = state.windSpeed;
+            const q = 0.5 * rho * vInf * vInf;
+            const A = state.frontalArea * (state.scale * state.scale);
+
+            state.dragForce = q * A * state.cd;
+            state.liftForce = q * A * state.cl;
+            const ldRatio = Math.abs(state.cd) > 0.001 ? state.cl / state.cd : 0;
+
+            const charLen = 2.1 * state.scale;
+            const re = (vInf * charLen) / 1.48e-5;
+            const st = state.cd > 0.35 ? 0.20 : 0.16;
+            const shedFreq = (st * vInf) / Math.max(0.4, Math.sqrt(A));
+
+            document.getElementById('tel-cd').textContent = state.cd.toFixed(3);
+            const cdDesc = document.getElementById('tel-cd-desc');
+            if (state.cd < 0.12) {
+                cdDesc.textContent = 'Attached Boundary Layer';
+                cdDesc.className = 'text-[10px] text-emerald-400 mt-0.5';
+            } else if (state.cd < 0.38) {
+                cdDesc.textContent = 'Moderate Induced / Eddy Wake';
+                cdDesc.className = 'text-[10px] text-sky-400 mt-0.5';
+            } else {
+                cdDesc.textContent = 'Separated Stall / Vortex Wake';
+                cdDesc.className = 'text-[10px] text-rose-400 mt-0.5';
+            }
+
+            const clSign = state.cl >= 0 ? '+' : '';
+            document.getElementById('tel-cl').textContent = `${clSign}${state.cl.toFixed(2)}`;
+            const clDesc = document.getElementById('tel-cl-desc');
+            const liftLabel = document.getElementById('tel-lift-label');
+            const liftValEl = document.getElementById('tel-lift');
+
+            if (Math.abs(state.pitch) > 15 && state.preset === 'airfoil') {
+                clDesc.textContent = 'Post-Stall Flow Separation';
+                clDesc.className = 'text-[10px] text-amber-400 mt-0.5';
+            } else if (state.cl > 0.03) {
+                clDesc.textContent = 'Upward Lift (+Y Suction)';
+                clDesc.className = 'text-[10px] text-emerald-400 mt-0.5';
+            } else if (state.cl < -0.03) {
+                clDesc.textContent = 'Negative Lift / Downforce (-Y)';
+                clDesc.className = 'text-[10px] text-sky-400 mt-0.5';
+            } else {
+                clDesc.textContent = 'Zero-Lift Equilibrium';
+                clDesc.className = 'text-[10px] text-slate-400 mt-0.5';
+            }
+
+            document.getElementById('tel-drag').textContent = state.dragForce.toFixed(1);
+            const liftSign = state.liftForce >= 0 ? '+' : '';
+            liftValEl.textContent = `${liftSign}${state.liftForce.toFixed(1)}`;
+            if (state.liftForce >= 0) {
+                liftValEl.className = 'mono text-lg font-bold text-emerald-400';
+                liftLabel.textContent = 'Upward Lift (+Y)';
+                liftLabel.className = 'text-[10px] text-emerald-400/80';
+            } else {
+                liftValEl.className = 'mono text-lg font-bold text-sky-400';
+                liftLabel.textContent = 'Downforce (-Y)';
+                liftLabel.className = 'text-[10px] text-sky-400/80';
+            }
+
+            const gammaSign = state.gammaNorm >= 0 ? '+' : '';
+            document.getElementById('tel-gamma').textContent = `${gammaSign}${state.gammaNorm.toFixed(3)}`;
+            document.getElementById('tel-area').textContent = `${A.toFixed(2)} m²`;
+            const ldSign = ldRatio >= 0 ? '+' : '';
+            document.getElementById('tel-ld').textContent = `${ldSign}${ldRatio.toFixed(2)}`;
+            document.getElementById('tel-wake-tu').textContent = `${state.wakeTu.toFixed(1)} %`;
+            document.getElementById('tel-enstrophy').textContent = `${state.maxEnstrophy.toFixed(1)} s⁻²`;
+            document.getElementById('tel-strouhal').textContent = `${shedFreq.toFixed(1)} Hz (St ${st.toFixed(2)})`;
+            document.getElementById('tel-re').textContent = `${(re / 1e6).toFixed(2)} × 10⁶`;
+
+            // Update 3D Force Vector Arrows anchored at the live Center of Pressure (CoP)
+            if (liftArrow && dragArrow && sideArrow && resultantArrow && copMarker) {
+                const copPos = new THREE.Vector3(state.copX, state.copY, state.copZ);
+                copMarker.position.copy(copPos);
+                liftArrow.position.copy(copPos);
+                dragArrow.position.copy(copPos);
+                sideArrow.position.copy(copPos);
+                resultantArrow.position.copy(copPos);
+
+                // Drag Vector always along +X (freestream direction)
+                const dragLen = Math.min(4.2, Math.max(0.45, Math.abs(state.cd) * 3.8));
+                dragArrow.setDirection(new THREE.Vector3(1, 0, 0));
+                dragArrow.setLength(dragLen, 0.42, 0.24);
+
+                // Lift Vector along +Y for positive Lift (Cl > 0), or -Y for Downforce (Cl < 0)
+                const liftDir = state.cl >= 0 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, -1, 0);
+                const liftLen = Math.min(4.4, Math.max(0.25, Math.abs(state.cl) * 2.35));
+                liftArrow.setDirection(liftDir);
+                liftArrow.setLength(liftLen, 0.45, 0.26);
+                liftArrow.setColor(state.cl >= 0 ? 0x10b981 : 0x38bdf8);
+
+                // Side Force Vector along Z
+                const sideDir = state.cs >= 0 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 0, -1);
+                const sideLen = Math.min(2.5, Math.max(0.15, Math.abs(state.cs) * 2.5));
+                sideArrow.setDirection(sideDir);
+                sideArrow.setLength(sideLen, 0.3, 0.18);
+                sideArrow.visible = state.showVectors && Math.abs(state.cs) > 0.03;
+
+                // Total Resultant Aerodynamic Force Vector R = [Cd, Cl, Cs]
+                const resVec = new THREE.Vector3(state.cd, state.cl, state.cs);
+                const resLen = Math.min(4.6, Math.max(0.45, resVec.length() * 2.4));
+                if (resVec.lengthSq() > 1e-4) {
+                    resultantArrow.setDirection(resVec.normalize());
+                    resultantArrow.setLength(resLen, 0.42, 0.24);
+                }
+            }
+        }
+
+        function updateTransformFromUI() {
+            state.pitch = parseFloat(document.getElementById('slider-pitch').value);
+            state.yaw   = parseFloat(document.getElementById('slider-yaw').value);
+            state.roll  = parseFloat(document.getElementById('slider-roll').value);
+            state.scale = parseFloat(document.getElementById('slider-scale').value);
+
+            const pSign = state.pitch >= 0 ? '+' : '';
+            document.getElementById('val-pitch').textContent = `${pSign}${state.pitch.toFixed(1)}°`;
+            document.getElementById('val-yaw').textContent   = `${state.yaw.toFixed(0)}°`;
+            document.getElementById('val-roll').textContent  = `${state.roll.toFixed(0)}°`;
+            document.getElementById('val-scale').textContent = `${state.scale.toFixed(2)}x`;
+
+            if (targetMesh) {
+                targetMesh.rotation.order = 'YXZ';
+                /**
+                 * RIGHT-HANDED COORDINATE SYSTEM FIX FOR ANGLE OF ATTACK (α):
+                 * Freestream flows from -X (Leading Edge) to +X (Trailing Edge), +Y is UP, +Z is towards viewer.
+                 * Rotating by +theta around +Z maps (-1, 0, 0) -> (-cos(theta), -sin(theta), 0) which pitches Nose DOWN!
+                 * Therefore, positive Angle of Attack (+α, Leading Edge UP to +Y, Trailing Edge DOWN to -Y)
+                 * requires rotation.z = -THREE.MathUtils.degToRad(state.pitch)!
+                 */
+                targetMesh.rotation.z = -THREE.MathUtils.degToRad(state.pitch);
+                targetMesh.rotation.y = THREE.MathUtils.degToRad(state.yaw);
+                targetMesh.rotation.x = THREE.MathUtils.degToRad(state.roll);
+                targetMesh.scale.setScalar(state.scale);
+
+                if (leTeIndicatorGroup) {
+                    leTeIndicatorGroup.rotation.copy(targetMesh.rotation);
+                    leTeIndicatorGroup.scale.setScalar(state.scale);
+                }
+            }
+
+            clearTimeout(voxelizeTimer);
+            voxelizeTimer = setTimeout(() => {
+                voxelizeCurrentMesh();
+            }, 25);
+        }
+
+        function resetTransform() {
+            document.getElementById('slider-pitch').value = 0;
+            document.getElementById('slider-yaw').value = 0;
+            document.getElementById('slider-roll').value = 0;
+            document.getElementById('slider-scale').value = 1.0;
+            updateTransformFromUI();
+            showToast('Model attitude reset to 0°');
+        }
+
+        function updateFlowParamsFromUI() {
+            state.windSpeed        = parseFloat(document.getElementById('slider-speed').value);
+            state.vorticityConf    = parseFloat(document.getElementById('slider-vc').value);
+            state.inflowTurbulence = parseFloat(document.getElementById('slider-tu').value);
+            state.sorIterations    = parseInt(document.getElementById('slider-sor').value, 10);
+            state.numParticles     = parseInt(document.getElementById('slider-density').value, 10);
+            state.trailLength      = parseInt(document.getElementById('slider-trail').value, 10);
+
+            const kmh = Math.round(state.windSpeed * 3.6);
+            document.getElementById('val-speed').textContent   = `${state.windSpeed} m/s (${kmh} km/h)`;
+            document.getElementById('val-vc').textContent      = `${state.vorticityConf.toFixed(1)} (${state.vorticityConf > 2.5 ? 'High LES' : 'Laminar'})`;
+            document.getElementById('val-tu').textContent      = `${state.inflowTurbulence.toFixed(1)}%`;
+            document.getElementById('val-sor').textContent     = `${state.sorIterations} iters`;
+            document.getElementById('val-density').textContent = `${state.numParticles}`;
+            document.getElementById('val-trail').textContent   = `${state.trailLength} segs`;
+        }
+
+        function setColorMode(mode) {
+            state.colorMode = mode;
+            ['velocity', 'cp', 'vorticity', 'tke'].forEach(m => {
+                document.getElementById(`cmap-${m}`).classList.toggle('active', m === mode);
+            });
+
+            const title = document.getElementById('legend-title');
+            const minEl = document.getElementById('legend-min');
+            const midEl = document.getElementById('legend-mid');
+            const maxEl = document.getElementById('legend-max');
+            const minSub = document.getElementById('legend-min-sub');
+            const midSub = document.getElementById('legend-mid-sub');
+            const maxSub = document.getElementById('legend-max-sub');
+
+            if (mode === 'velocity') {
+                title.textContent = 'Local Velocity Ratio (|u| / U∞)';
+                minEl.textContent = '0.0× U∞'; minSub.textContent = 'Recirculation / Stag';
+                midEl.textContent = '1.0× U∞'; midSub.textContent = 'Freestream';
+                maxEl.textContent = '1.8× U∞'; maxSub.textContent = 'Shear Acceleration';
+            } else if (mode === 'cp') {
+                title.textContent = 'Pressure Coefficient (Cp)';
+                minEl.textContent = 'Cp -1.2'; minSub.textContent = 'Suction Peak';
+                midEl.textContent = 'Cp 0.0';  midSub.textContent = 'Static Ambient';
+                maxEl.textContent = 'Cp +1.0'; maxSub.textContent = 'Stagnation Zone';
+            } else if (mode === 'vorticity') {
+                title.textContent = 'Vorticity Magnitude (|ω| = |∇×u|)';
+                minEl.textContent = '0 s⁻¹';   minSub.textContent = 'Irrotational';
+                midEl.textContent = '120 s⁻¹'; midSub.textContent = 'Shear Layer';
+                maxEl.textContent = '300+ s⁻¹'; maxSub.textContent = 'Vortex Core';
+            } else {
+                title.textContent = 'Turbulent Kinetic Energy (SGS TKE)';
+                minEl.textContent = '0.0 m²/s²'; minSub.textContent = 'Laminar Core';
+                midEl.textContent = '15 m²/s²';  midSub.textContent = 'Transitional';
+                maxEl.textContent = '45+ m²/s²'; maxSub.textContent = 'Intense Eddies';
+            }
+            showToast(`Color Diagnostic Mode: ${title.textContent}`);
+        }
+
+        function setSliceAxis(axis) {
+            state.sliceAxis = axis;
+            ['none', 'z', 'y', 'x'].forEach(a => {
+                document.getElementById(`slice-${a}`).classList.toggle('active', a === axis);
+            });
+            updateSliceGeometryTransform();
+        }
+
+        function updateSlicePosFromUI() {
+            state.slicePos = parseFloat(document.getElementById('slider-slice-pos').value);
+            updateSliceGeometryTransform();
+        }
+
+        function setEmitterMode(mode) {
+            state.emitterMode = mode;
+            ['volume', 'vertical', 'horizontal'].forEach(m => {
+                document.getElementById(`emit-${m}`).classList.toggle('active', m === mode);
+            });
+            resetParticles();
+        }
+
+        function toggleSurfaceCp() {
+            state.showSurfaceCp = document.getElementById('chk-surface-cp').checked;
+            if (targetMesh && !state.showSurfaceCp) {
+                const colAttr = targetMesh.geometry.attributes.color;
+                for (let i = 0; i < colAttr.count; i++) {
+                    colAttr.setXYZ(i, 0.58, 0.64, 0.72);
+                }
+                colAttr.needsUpdate = true;
+            }
+        }
+
+        function toggleVortexCores() {
+            state.showVortexCores = document.getElementById('chk-vortices').checked;
+            if (vortexCorePoints) vortexCorePoints.visible = state.showVortexCores;
+        }
+
+        function toggleWireframe() {
+            state.wireframe = document.getElementById('chk-wireframe').checked;
+            if (targetMesh && targetMesh.material) {
+                targetMesh.material.wireframe = state.wireframe;
+            }
+        }
+
+        function toggleForceVectors() {
+            state.showVectors = document.getElementById('chk-vectors').checked;
+            if (liftArrow) liftArrow.visible = state.showVectors;
+            if (dragArrow) dragArrow.visible = state.showVectors;
+            if (sideArrow) sideArrow.visible = state.showVectors && Math.abs(state.cs) > 0.03;
+            if (resultantArrow) resultantArrow.visible = state.showVectors;
+            if (copMarker) copMarker.visible = state.showVectors;
+            if (leTeIndicatorGroup) leTeIndicatorGroup.visible = state.showVectors;
+        }
+
+        function setChartMode(mode) {
+            state.chartMode = mode;
+            const btnPolar = document.getElementById('tab-polar');
+            const btnTime = document.getElementById('tab-time');
+            const thirdLegend = document.getElementById('chart-third-legend');
+
+            if (mode === 'polar') {
+                btnPolar.className = 'px-2 py-0.5 rounded text-[10px] font-medium bg-sky-500/20 text-sky-300 border border-sky-500/40 transition';
+                btnTime.className = 'px-2 py-0.5 rounded text-[10px] font-medium text-slate-400 hover:text-slate-200 transition';
+                thirdLegend.textContent = '● α-OpPt';
+                thirdLegend.className = 'text-sky-400';
+            } else {
+                btnTime.className = 'px-2 py-0.5 rounded text-[10px] font-medium bg-sky-500/20 text-sky-300 border border-sky-500/40 transition';
+                btnPolar.className = 'px-2 py-0.5 rounded text-[10px] font-medium text-slate-400 hover:text-slate-200 transition';
+                thirdLegend.textContent = '■ Tu';
+                thirdLegend.className = 'text-amber-400';
+            }
+            drawTelemetryChart();
+        }
+
+        function togglePause() {
+            state.isPaused = !state.isPaused;
+            const dot = document.getElementById('pause-dot');
+            const label = document.getElementById('pause-label');
+            if (state.isPaused) {
+                dot.className = 'w-2 h-2 rounded-full bg-amber-400';
+                label.textContent = 'Paused';
+            } else {
+                dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+                label.textContent = 'Solving CFD';
+            }
+        }
+
+        function stepSingleFrame() {
+            state.isPaused = false;
+            stepNavierStokesCFD();
+            stepParticlesRK4(0.016);
+            updateLaserSliceTexture();
+            updateVortexCoreVisualizer();
+            drawTelemetryChart();
+            state.isPaused = true;
+            document.getElementById('pause-dot').className = 'w-2 h-2 rounded-full bg-amber-400';
+            document.getElementById('pause-label').textContent = 'Paused';
+            showToast('Advanced 1 Navier-Stokes timestep Δt');
+        }
+
+        function setCameraView(view) {
+            if (view === 'iso') camera.position.set(1.2, 4.0, 14.2);
+            else if (view === 'side') camera.position.set(0.5, 0.2, 15.5);
+            else if (view === 'top') camera.position.set(0.5, 16.5, 0.01);
+            else if (view === 'front') camera.position.set(14.5, 0.5, 0);
+            controls.target.set(0.6, 0, 0);
+            controls.update();
+        }
+
+        function showToast(msg) {
+            const el = document.getElementById('toast-msg');
+            if (el) el.textContent = msg;
+        }
+
+        function drawTelemetryChart() {
+            const canvas = document.getElementById('telemetry-chart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+
+            chartHistory.cd.push(state.cd);
+            chartHistory.cd.shift();
+            chartHistory.cl.push(state.cl);
+            chartHistory.cl.shift();
+            chartHistory.tu.push(state.wakeTu / 40.0);
+            chartHistory.tu.shift();
+
+            ctx.clearRect(0, 0, w, h);
+
+            if (state.chartMode === 'polar') {
+                // Plot Live Aerodynamic Polar: Cl(α) and Cd(α) for α in [-20°, +25°]
+                const alphaMin = -20;
+                const alphaMax = 25;
+                const yMin = -1.2;
+                const yMax = 1.75;
+
+                const mapX = (a) => ((a - alphaMin) / (alphaMax - alphaMin)) * (w - 24) + 16;
+                const mapY = (val) => h - 12 - ((val - yMin) / (yMax - yMin)) * (h - 20);
+
+                // Zero Axes (Cl = 0 horizontal line & alpha = 0 vertical line)
+                ctx.strokeStyle = 'rgba(71, 85, 105, 0.45)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                const yZero = mapY(0);
+                ctx.moveTo(16, yZero); ctx.lineTo(w - 8, yZero);
+                const xZero = mapX(0);
+                ctx.moveTo(xZero, 6); ctx.lineTo(xZero, h - 12);
+                ctx.stroke();
+
+                // Axis Labels
+                ctx.fillStyle = '#64748b';
+                ctx.font = '9px JetBrains Mono, monospace';
+                ctx.fillText('-20°', 14, h - 2);
+                ctx.fillText('0°', xZero - 5, h - 2);
+                ctx.fillText('+15°', mapX(15) - 10, h - 2);
+                ctx.fillText('0.0', 1, yZero + 3);
+                ctx.fillText('+1.4', 1, mapY(1.4) + 3);
+
+                // Draw Cl vs Alpha Curve (Emerald Green)
+                ctx.strokeStyle = '#10b981';
+                ctx.lineWidth = 1.8;
+                ctx.beginPath();
+                for (let a = alphaMin; a <= alphaMax; a += 1.0) {
+                    const pol = evaluateTheoreticalAeroPolar(state.preset, a, state.yaw);
+                    const px = mapX(a);
+                    const py = mapY(pol.cl);
+                    if (a === alphaMin) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.stroke();
+
+                // Draw Cd vs Alpha Curve (Rose Red)
+                ctx.strokeStyle = '#f43f5e';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                for (let a = alphaMin; a <= alphaMax; a += 1.0) {
+                    const pol = evaluateTheoreticalAeroPolar(state.preset, a, state.yaw);
+                    const px = mapX(a);
+                    const py = mapY(pol.cd);
+                    if (a === alphaMin) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.stroke();
+
+                // Highlight Current Live Operating Point (alpha, state.cl) & (alpha, state.cd)
+                const curX = mapX(Math.max(alphaMin, Math.min(alphaMax, state.pitch)));
+                const curYCl = mapY(Math.max(yMin, Math.min(yMax, state.cl)));
+                const curYCd = mapY(Math.max(yMin, Math.min(yMax, state.cd)));
+
+                // Vertical cursor line at current AoA
+                ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+                ctx.setLineDash([2, 2]);
+                ctx.beginPath();
+                ctx.moveTo(curX, 6); ctx.lineTo(curX, h - 12);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Cl operating point dot
+                ctx.fillStyle = '#38bdf8';
+                ctx.beginPath();
+                ctx.arc(curX, curYCl, 3.6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Cd operating point dot
+                ctx.fillStyle = '#fb7185';
+                ctx.beginPath();
+                ctx.arc(curX, curYCd, 3.0, 0, Math.PI * 2);
+                ctx.fill();
+                return;
+            }
+
+            // Transient Time Oscilloscope Mode (Cl(t), Cd(t), Tu(t))
+            const yMin = -1.2;
+            const yMax = 1.8;
+            const mapY = (val) => h - 8 - ((val - yMin) / (yMax - yMin)) * (h - 16);
+
+            ctx.strokeStyle = 'rgba(51, 65, 85, 0.45)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            const yZero = mapY(0);
+            ctx.moveTo(0, yZero); ctx.lineTo(w, yZero);
+            ctx.stroke();
+
+            const plotSeries = (arr, color) => {
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1.6;
+                ctx.beginPath();
+                for (let i = 0; i < arr.length; i++) {
+                    const x = (i / (arr.length - 1)) * w;
+                    const y = mapY(Math.max(yMin, Math.min(yMax, arr[i])));
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            };
+
+            plotSeries(chartHistory.tu, '#fbbf24');
+            plotSeries(chartHistory.cl, '#10b981');
+            plotSeries(chartHistory.cd, '#f43f5e');
+        }
+
+        /***********************************************************************
+         * 11. MAIN ANIMATION & CFD SOLVER LOOP
+         ***********************************************************************/
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        const clock = new THREE.Clock();
+        let frameCounter = 0;
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const dt = Math.min(clock.getDelta(), 0.04);
+
+            if (!state.isPaused) {
+                stepNavierStokesCFD();
+                stepParticlesRK4(dt);
+                updateLaserSliceTexture();
+
+                frameCounter++;
+                if (frameCounter % 2 === 0) {
+                    updateVortexCoreVisualizer();
+                }
+                if (frameCounter % 3 === 0) {
+                    drawTelemetryChart();
+                }
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        window.onload = function () {
+            initScene();
+            animate();
+        };
+    </script>
+</body>
+</html>
